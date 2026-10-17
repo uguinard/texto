@@ -29,6 +29,18 @@ type RenderedText = {
   sentences: RenderedSentence[];
 };
 
+type LookupResponse = {
+  surface: string;
+  lemma: string | null;
+  translation: string | null;
+  target_definition: string | null;
+  example: string | null;
+  grammar_note: string | null;
+  pragmatics_note: string | null;
+  confidence: "high" | "medium" | "low";
+  uncertain: boolean;
+};
+
 function isTextImportResult(value: unknown): value is TextImportResult {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -99,6 +111,38 @@ function isRenderedText(value: unknown): value is RenderedText {
   );
 }
 
+function isLookupResponse(value: unknown): value is LookupResponse {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const isNullableString = (field: unknown) =>
+    typeof field === "string" || field === null;
+
+  return (
+    "surface" in value &&
+    typeof value.surface === "string" &&
+    "lemma" in value &&
+    isNullableString(value.lemma) &&
+    "translation" in value &&
+    isNullableString(value.translation) &&
+    "target_definition" in value &&
+    isNullableString(value.target_definition) &&
+    "example" in value &&
+    isNullableString(value.example) &&
+    "grammar_note" in value &&
+    isNullableString(value.grammar_note) &&
+    "pragmatics_note" in value &&
+    isNullableString(value.pragmatics_note) &&
+    "confidence" in value &&
+    (value.confidence === "high" ||
+      value.confidence === "medium" ||
+      value.confidence === "low") &&
+    "uncertain" in value &&
+    typeof value.uncertain === "boolean"
+  );
+}
+
 function getErrorMessage(value: unknown): string | null {
   if (typeof value !== "object" || value === null || !("detail" in value)) {
     return null;
@@ -114,15 +158,83 @@ function App() {
   const [result, setResult] = createSignal<TextImportResult | null>(null);
   const [renderedText, setRenderedText] = createSignal<RenderedText | null>(null);
   const [selectedToken, setSelectedToken] = createSignal<RenderedToken | null>(null);
+  const [lookupResult, setLookupResult] = createSignal<LookupResponse | null>(null);
+  const [lookupLoading, setLookupLoading] = createSignal(false);
+  const [lookupError, setLookupError] = createSignal<string | null>(null);
+  const [lookupRequestId, setLookupRequestId] = createSignal(0);
   const [error, setError] = createSignal<string | null>(null);
   const [importing, setImporting] = createSignal(false);
 
+  const handleTokenClick = async (
+    token: RenderedToken,
+    sentence: RenderedSentence,
+    text: RenderedText,
+  ) => {
+    const requestId = lookupRequestId() + 1;
+    setLookupRequestId(requestId);
+    setSelectedToken(token);
+    setLookupResult(null);
+    setLookupError(null);
+    setLookupLoading(true);
+
+    try {
+      const response = await fetch("/api/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text_id: text.text_id,
+          token_id: token.id,
+          surface: token.surface,
+          sentence: sentence.content,
+          language: text.language,
+        }),
+      });
+      const body: unknown = await response.json();
+      if (requestId !== lookupRequestId()) {
+        return;
+      }
+
+      if (!response.ok) {
+        setLookupError(getErrorMessage(body) ?? "Lookup failed.");
+        return;
+      }
+
+      if (!isLookupResponse(body)) {
+        setLookupError("The backend returned an unexpected lookup response.");
+        return;
+      }
+
+      setLookupResult(body);
+    } catch (requestError) {
+      if (requestId === lookupRequestId()) {
+        setLookupError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Unable to reach the lookup service.",
+        );
+      }
+    } finally {
+      if (requestId === lookupRequestId()) {
+        setLookupLoading(false);
+      }
+    }
+  };
+
+  const closeLookup = () => {
+    setLookupRequestId(lookupRequestId() + 1);
+    setSelectedToken(null);
+    setLookupResult(null);
+    setLookupError(null);
+    setLookupLoading(false);
+  };
+
   const handleImport = async () => {
+    setLookupRequestId(lookupRequestId() + 1);
     setImporting(true);
     setError(null);
     setResult(null);
     setRenderedText(null);
-    setSelectedToken(null);
+    closeLookup();
 
     try {
       const response = await fetch("/api/texts", {
@@ -273,11 +385,13 @@ function App() {
                               }
                               role="button"
                               tabIndex={0}
-                              onClick={() => setSelectedToken(token)}
+                              onClick={() =>
+                                void handleTokenClick(token, sentence, text())
+                              }
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  setSelectedToken(token);
+                                  void handleTokenClick(token, sentence, text());
                                 }
                               }}
                             >
@@ -299,12 +413,38 @@ function App() {
       <Show when={selectedToken()}>
         {(token) => (
           <aside style={styles.tokenPopup} role="status" aria-live="polite">
-            <span>{token().surface}</span>
+            <div style={styles.lookupContent}>
+              <strong>{token().surface}</strong>
+              <Show when={lookupLoading()}>
+                <p>Looking up…</p>
+              </Show>
+              <Show when={lookupError()}>
+                <p style={styles.lookupError} role="alert">
+                  {lookupError()}
+                </p>
+              </Show>
+              <Show when={lookupResult()}>
+                {(lookup) => (
+                  <div style={styles.lookupDetails}>
+                    <p><strong>Lemma:</strong> {lookup().lemma ?? "—"}</p>
+                    <p><strong>Translation:</strong> {lookup().translation ?? "—"}</p>
+                    <p><strong>Definition:</strong> {lookup().target_definition ?? "—"}</p>
+                    <p><strong>Example:</strong> {lookup().example ?? "—"}</p>
+                    <p><strong>Grammar:</strong> {lookup().grammar_note ?? "—"}</p>
+                    <p><strong>Pragmatics:</strong> {lookup().pragmatics_note ?? "—"}</p>
+                    <p>
+                      <strong>Confidence:</strong> {lookup().confidence}
+                      {lookup().uncertain ? " (uncertain)" : ""}
+                    </p>
+                  </div>
+                )}
+              </Show>
+            </div>
             <button
               style={styles.closePopup}
               type="button"
               aria-label="Close selected word"
-              onClick={() => setSelectedToken(null)}
+              onClick={closeLookup}
             >
               ×
             </button>
@@ -447,7 +587,7 @@ const styles: Record<string, JSX.CSSProperties> = {
     right: "1rem",
     bottom: "1rem",
     display: "flex",
-    "align-items": "center",
+    "align-items": "flex-start",
     gap: "1rem",
     padding: "0.75rem 1rem",
     color: "white",
@@ -455,6 +595,17 @@ const styles: Record<string, JSX.CSSProperties> = {
     "border-radius": "6px",
     "box-shadow": "0 4px 12px rgba(0, 0, 0, 0.2)",
     "z-index": 10,
+    "max-width": "min(28rem, calc(100vw - 2rem))",
+  },
+  lookupContent: {
+    "min-width": 0,
+  },
+  lookupDetails: {
+    "font-size": "0.875rem",
+    "line-height": 1.4,
+  },
+  lookupError: {
+    color: "#fecaca",
   },
   closePopup: {
     padding: 0,

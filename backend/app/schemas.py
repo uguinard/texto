@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -48,3 +50,23 @@ class TextRenderResponse(BaseModel):
     title: str
     language: str
     sentences: list[RenderedSentence]
+
+
+class LookupRequest(BaseModel):
+    text_id: int = Field(gt=0)
+    token_id: int = Field(gt=0)
+    surface: str = Field(min_length=1)
+    sentence: str = Field(min_length=1)
+    language: str = Field(min_length=1)
+
+
+class LookupResponse(BaseModel):
+    surface: str
+    lemma: str | None
+    translation: str | None
+    target_definition: str | None
+    example: str | None
+    grammar_note: str | None
+    pragmatics_note: str | None
+    confidence: Literal["high", "medium", "low"]
+    uncertain: bool
