@@ -143,6 +143,7 @@ def list_lexicon(
                     for form in forms
                 ),
                 created_at=vocab_item.created_at,
+                next_review=vocab_item.next_review,
             )
         )
     return result

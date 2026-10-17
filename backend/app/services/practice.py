@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlmodel import Session, col, select
 
 from ..models import Lexeme, PracticeCard, ReviewLog, Sentence, Text, Token, VocabItem
@@ -8,10 +10,19 @@ MASTERY_STEP = 0.05
 
 
 def create_practice_session(session: Session) -> list[PracticeCardResponse]:
+    now = datetime.now(timezone.utc)
     learning_items = session.exec(
         select(VocabItem)
         .where(col(VocabItem.state) == "learning")
-        .order_by(col(VocabItem.created_at), col(VocabItem.id))
+        .where(
+            col(VocabItem.next_review).is_(None)
+            | (col(VocabItem.next_review) <= now)
+        )
+        .order_by(
+            col(VocabItem.next_review),
+            col(VocabItem.created_at),
+            col(VocabItem.id),
+        )
     ).all()
 
     cards: list[PracticeCard] = []
@@ -81,6 +92,15 @@ def record_practice_review(
     mastery_before = item.mastery
     adjustment = MASTERY_STEP if request.correct else -MASTERY_STEP
     item.mastery = min(1.0, max(0.0, mastery_before + adjustment))
+    now = datetime.now(timezone.utc)
+    if request.correct:
+        item.interval_days = max(1.0, item.interval_days * item.ease_factor)
+        item.next_review = now + timedelta(days=item.interval_days)
+    else:
+        item.interval_days = 0.0
+        item.next_review = now
+        item.ease_factor = max(1.3, item.ease_factor - 0.2)
+
     session.add(
         ReviewLog(
             card_id=card.id,

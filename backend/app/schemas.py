@@ -85,6 +85,7 @@ class LexiconItemResponse(BaseModel):
     state: Literal["new", "learning", "known"]
     exposure_count: int
     created_at: datetime
+    next_review: datetime | None
 
 
 class LexiconStateUpdate(BaseModel):

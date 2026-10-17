@@ -103,11 +103,18 @@ def _migrate_practice_columns() -> None:
         column["name"]
         for column in inspect(engine).get_columns("vocab_items")
     }
-    if "mastery" not in columns:
-        with engine.begin() as connection:
-            connection.exec_driver_sql(
-                "ALTER TABLE vocab_items ADD COLUMN mastery FLOAT NOT NULL DEFAULT 0.5"
-            )
+    migrations = {
+        "mastery": "FLOAT NOT NULL DEFAULT 0.5",
+        "next_review": "DATETIME",
+        "interval_days": "FLOAT NOT NULL DEFAULT 0",
+        "ease_factor": "FLOAT NOT NULL DEFAULT 2.5",
+    }
+    with engine.begin() as connection:
+        for column, definition in migrations.items():
+            if column not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE vocab_items ADD COLUMN {column} {definition}"
+                )
 
 
 def get_session() -> Generator[Session, None, None]:

@@ -67,6 +67,9 @@ class VocabItem(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc)
     )
     mastery: float = Field(default=0.5)
+    next_review: datetime | None = None
+    interval_days: float = Field(default=0.0)
+    ease_factor: float = Field(default=2.5)
 
 
 class PracticeCard(SQLModel, table=True):

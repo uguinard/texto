@@ -43,6 +43,7 @@ type LexiconItem = {
   state: LexiconState;
   exposure_count: number;
   created_at: string;
+  next_review: string | null;
 };
 
 type PracticeCard = {
@@ -188,7 +189,9 @@ function isLexiconItem(value: unknown): value is LexiconItem {
     "exposure_count" in value &&
     typeof value.exposure_count === "number" &&
     "created_at" in value &&
-    typeof value.created_at === "string"
+    typeof value.created_at === "string" &&
+    "next_review" in value &&
+    (typeof value.next_review === "string" || value.next_review === null)
   );
 }
 
@@ -198,6 +201,13 @@ function isLexiconList(value: unknown): value is LexiconItem[] {
 
 function isLexiconState(value: string): value is LexiconState {
   return value === "new" || value === "learning" || value === "known";
+}
+
+function formatNextReview(nextReview: string | null): string {
+  if (nextReview === null || new Date(nextReview).getTime() <= Date.now()) {
+    return "Due now";
+  }
+  return new Date(nextReview).toLocaleString();
 }
 
 function isPracticeCard(value: unknown): value is PracticeCard {
@@ -1070,6 +1080,7 @@ function App() {
                         <th style={styles.tableCell}>Translation</th>
                         <th style={styles.tableCell}>State</th>
                         <th style={styles.tableCell}>Exposure count</th>
+                        <th style={styles.tableCell}>Next Review</th>
                         <th style={styles.tableCell}>Actions</th>
                       </tr>
                     </thead>
@@ -1092,6 +1103,18 @@ function App() {
                               </span>
                             </td>
                             <td style={styles.tableCell}>{item.exposure_count}</td>
+                            <td style={styles.tableCell}>
+                              {item.state === "known" ? (
+                                <span
+                                  aria-label="Known; no review due"
+                                  title="Known; no review due"
+                                >
+                                  ✓
+                                </span>
+                              ) : (
+                                formatNextReview(item.next_review)
+                              )}
+                            </td>
                             <td style={styles.tableCell}>
                               <label style={styles.visuallyHidden} for={`state-${item.vocab_item_id}`}>
                                 State for {item.lemma}
