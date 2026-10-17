@@ -20,6 +20,9 @@ class Text(SQLModel, table=True):
     title: str
     language: str
     raw_text: str
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
     sentences: list["Sentence"] = Relationship(
         back_populates="text",
@@ -33,6 +36,7 @@ class Sentence(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     text_id: int = Field(foreign_key="texts.id", ondelete="CASCADE")
     position: int
+    paragraph_index: int = Field(default=0)
     content: str
 
     text: Text = Relationship(back_populates="sentences")
@@ -50,6 +54,8 @@ class Token(SQLModel, table=True):
     order_index: int
     surface: str
     whitespace_after: str = ""
+    lemma: str | None = None
+    pos: str | None = None
 
     sentence: Sentence = Relationship(back_populates="tokens")
 

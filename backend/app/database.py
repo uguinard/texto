@@ -1,6 +1,7 @@
 from pathlib import Path
 from collections.abc import Generator
 from datetime import datetime, timezone
+import re
 
 from sqlalchemy import inspect
 from sqlalchemy.engine import make_url
@@ -20,6 +21,7 @@ engine = create_engine(settings.database_url, connect_args=connect_args)
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_practice_columns()
+    _migrate_reader_metadata()
     _migrate_vocabulary_table()
 
     from .models import Sentence, Token
@@ -115,6 +117,64 @@ def _migrate_practice_columns() -> None:
                 connection.exec_driver_sql(
                     f"ALTER TABLE vocab_items ADD COLUMN {column} {definition}"
                 )
+
+
+def _migrate_reader_metadata() -> None:
+    from .models import Sentence, Text
+
+    text_columns = {
+        column["name"] for column in inspect(engine).get_columns("texts")
+    }
+    token_columns = {
+        column["name"] for column in inspect(engine).get_columns("tokens")
+    }
+    sentence_columns = {
+        column["name"] for column in inspect(engine).get_columns("sentences")
+    }
+    with engine.begin() as connection:
+        if "created_at" not in text_columns:
+            connection.exec_driver_sql("ALTER TABLE texts ADD COLUMN created_at DATETIME")
+        connection.exec_driver_sql(
+            "UPDATE texts SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
+        )
+        if "lemma" not in token_columns:
+            connection.exec_driver_sql("ALTER TABLE tokens ADD COLUMN lemma VARCHAR")
+        if "pos" not in token_columns:
+            connection.exec_driver_sql("ALTER TABLE tokens ADD COLUMN pos VARCHAR")
+        if "paragraph_index" not in sentence_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE sentences ADD COLUMN paragraph_index "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
+
+    with Session(engine) as session:
+        for text in session.exec(select(Text)).all():
+            normalized_text = text.raw_text.strip()
+            paragraph_ends = [
+                match.end()
+                for match in re.finditer(
+                    r"(?:\r?\n)[ \t]*(?:\r?\n)+",
+                    normalized_text,
+                )
+            ]
+            paragraph_index = 0
+            search_from = 0
+            for sentence in session.exec(
+                select(Sentence)
+                .where(col(Sentence.text_id) == text.id)
+                .order_by(col(Sentence.position))
+            ).all():
+                start = normalized_text.find(sentence.content, search_from)
+                if start < 0:
+                    continue
+                while (
+                    paragraph_index < len(paragraph_ends)
+                    and paragraph_ends[paragraph_index] <= start
+                ):
+                    paragraph_index += 1
+                sentence.paragraph_index = paragraph_index
+                search_from = start + len(sentence.content)
+        session.commit()
 
 
 def get_session() -> Generator[Session, None, None]:

@@ -44,11 +44,17 @@ class TextListItem(BaseModel):
     id: int
     title: str
     language: str
+    created_at: datetime
+    sentence_count: int
+    token_count: int
 
 
 class RenderedToken(BaseModel):
     id: int
     surface: str
+    lemma: str | None
+    pos: str | None
+    translation: str | None
     sentence_id: int
     order_index: int
     whitespace_after: str
@@ -58,6 +64,7 @@ class RenderedToken(BaseModel):
 class RenderedSentence(BaseModel):
     id: int
     position: int
+    paragraph_index: int
     content: str
     tokens: list[RenderedToken]
 
@@ -66,6 +73,9 @@ class TextRenderResponse(BaseModel):
     text_id: int
     title: str
     language: str
+    created_at: datetime
+    sentence_count: int
+    token_count: int
     sentences: list[RenderedSentence]
 
 
