@@ -1,21 +1,30 @@
-from fastapi import FastAPI, Body
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .config import settings
+from .database import create_db_and_tables
+from .routers.texts import router as texts_router
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    create_db_and_tables()
+    yield
+
 
 class MockLookupRequest(BaseModel):
-    text: str
-
-
-class TextImportRequest(BaseModel):
     text: str
 
 
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
+    lifespan=lifespan,
 )
+app.include_router(texts_router)
 
 # CORS for local development
 app.add_middleware(
@@ -59,18 +68,4 @@ async def mock_lookup(request: MockLookupRequest):
         "text": text,
         "tokens": results,
         "mode": "mock",
-    }
-
-
-@app.post("/api/texts")
-async def import_text(request: TextImportRequest):
-    """
-    Import a text for reading.
-    In the future, this will save to database and return a text ID.
-    """
-    return {
-        "id": "mock-text-id",
-        "content": request.text,
-        "status": "imported",
-        "message": "Text imported successfully (mock mode)",
     }

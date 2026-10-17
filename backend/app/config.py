@@ -1,5 +1,10 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
+
+
+DEFAULT_DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "lector.db"
 
 
 class Settings(BaseSettings):
@@ -8,7 +13,7 @@ class Settings(BaseSettings):
     debug: bool = True
 
     # Database
-    database_url: str = "sqlite:///backend/data/lector.db"
+    database_url: str = f"sqlite:///{DEFAULT_DATABASE_PATH}"
 
     # LLM
     llm_mode: str = Field(default="mock", description="LLM mode: disabled, mock, local, cloud")

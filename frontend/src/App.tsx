@@ -1,40 +1,79 @@
-import { createSignal } from "solid-js";
-import { For } from "solid-js";
+import { createSignal, Show } from "solid-js";
+import type { JSX } from "solid-js";
+
+type TextImportResult = {
+  id: number;
+  sentence_count: number;
+  approximate_token_count: number;
+};
+
+function isTextImportResult(value: unknown): value is TextImportResult {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return (
+    "id" in value &&
+    typeof value.id === "number" &&
+    "sentence_count" in value &&
+    typeof value.sentence_count === "number" &&
+    "approximate_token_count" in value &&
+    typeof value.approximate_token_count === "number"
+  );
+}
+
+function getErrorMessage(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || !("detail" in value)) {
+    return null;
+  }
+
+  return typeof value.detail === "string" ? value.detail : null;
+}
 
 function App() {
-  const [text, setText] = createSignal("");
-  const [status, setStatus] = createSignal<{ message: string; type: "success" | "error" } | null>(null);
+  const [title, setTitle] = createSignal("");
+  const [language, setLanguage] = createSignal("");
+  const [rawText, setRawText] = createSignal("");
+  const [result, setResult] = createSignal<TextImportResult | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
   const [importing, setImporting] = createSignal(false);
 
   const handleImport = async () => {
-    const content = text().trim();
-    if (!content) {
-      setStatus({ message: "Please enter some text first.", type: "error" });
-      return;
-    }
-
     setImporting(true);
-    setStatus(null);
+    setError(null);
+    setResult(null);
 
     try {
       const response = await fetch("/api/texts", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ text: content }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title(),
+          language: language(),
+          raw_text: rawText(),
+        }),
       });
+      const body: unknown = await response.json();
 
-      const data = await response.json();
-
-      if (response.ok) {
-        setStatus({ message: data.message || "Text imported successfully!", type: "success" });
-        setText("");
-      } else {
-        setStatus({ message: data.detail || "Failed to import text", type: "error" });
+      if (!response.ok) {
+        setError(getErrorMessage(body) ?? "Text import failed.");
+        return;
       }
-    } catch (error) {
-      setStatus({ message: "Network error. Is the backend running?", type: "error" });
+
+      if (!isTextImportResult(body)) {
+        setError("The backend returned an unexpected import response.");
+        return;
+      }
+
+      setResult(body);
+      setTitle("");
+      setRawText("");
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to reach the backend.",
+      );
     } finally {
       setImporting(false);
     }
@@ -49,207 +88,189 @@ function App() {
 
       <main style={styles.main}>
         <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Import Text</h2>
+          <h2 style={styles.sectionTitle}>Import a text</h2>
           <p style={styles.description}>
-            Paste a text in your target language to begin reading and learning.
+            Add a text to read and learn from. Your text is saved locally.
           </p>
 
-          <textarea
-            style={styles.textarea}
-            value={text()}
-            onInput={(e) => setText(e.currentTarget.value)}
-            placeholder="Paste your text here..."
-            rows={15}
-          />
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleImport();
+            }}
+          >
+            <label style={styles.label} for="title">
+              Title
+            </label>
+            <input
+              id="title"
+              style={styles.input}
+              type="text"
+              value={title()}
+              onInput={(event) => setTitle(event.currentTarget.value)}
+              required
+            />
 
-          <div style={styles.buttonGroup}>
-            <button
-              style={styles.button}
-              onClick={handleImport}
-              disabled={importing()}
-            >
+            <label style={styles.label} for="language">
+              Language
+            </label>
+            <input
+              id="language"
+              style={styles.input}
+              type="text"
+              value={language()}
+              onInput={(event) => setLanguage(event.currentTarget.value)}
+              placeholder="For example, Spanish"
+              required
+            />
+
+            <label style={styles.label} for="raw-text">
+              Text
+            </label>
+            <textarea
+              id="raw-text"
+              style={styles.textarea}
+              value={rawText()}
+              onInput={(event) => setRawText(event.currentTarget.value)}
+              placeholder="Paste your text here..."
+              rows={12}
+              required
+            />
+
+            <button style={styles.button} type="submit" disabled={importing()}>
               {importing() ? "Importing..." : "Import text"}
             </button>
-          </div>
+          </form>
 
-          {status() && (
-            <div style={{
-              ...styles.status,
-              backgroundColor: status().type === "success" ? "#d4edda" : "#f8d7da",
-              color: status().type === "success" ? "#155724" : "#721c24",
-              borderColor: status().type === "success" ? "#c3e6cb" : "#f5c6cb",
-            }}>
-              {status().message}
+          <Show when={error()}>
+            <div style={styles.error} role="alert">
+              {error()}
             </div>
-          )}
-        </section>
+          </Show>
 
-        <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Quick Test</h2>
-          <p style={styles.description}>
-            Test the mock lookup endpoint:
-          </p>
-          <MockLookupTest />
+          <Show when={result()}>
+            <div style={styles.success} role="status">
+              <h3 style={styles.resultTitle}>Text saved</h3>
+              <p>Text ID: {result()?.id}</p>
+              <p>Sentences: {result()?.sentence_count}</p>
+              <p>Approximate tokens: {result()?.approximate_token_count}</p>
+            </div>
+          </Show>
         </section>
       </main>
 
       <footer style={styles.footer}>
-        <p>Lector v0.0.1 — Local-first language learning</p>
+        <p>Lector — Local-first language learning</p>
       </footer>
     </div>
   );
 }
 
-// Simple component to test the mock-lookup endpoint
-function MockLookupTest() {
-  const [testText, setTestText] = createSignal("Hello world this is a test");
-  const [result, setResult] = createSignal<any>(null);
-  const [loading, setLoading] = createSignal(false);
-
-  const handleTest = async () => {
-    setLoading(true);
-    setResult(null);
-    try {
-      const response = await fetch("/api/mock-lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: testText() }),
-      });
-      const data = await response.json();
-      setResult(data);
-    } catch (error) {
-      setResult({ error: "Failed to call mock-lookup" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div style={styles.testContainer}>
-      <input
-        style={styles.testInput}
-        type="text"
-        value={testText()}
-        onInput={(e) => setTestText(e.currentTarget.value)}
-        placeholder="Enter text to analyze"
-      />
-      <button style={styles.button} onClick={handleTest} disabled={loading()}>
-        {loading() ? "Analyzing..." : "Test Mock Lookup"}
-      </button>
-
-      {result() && (
-        <pre style={styles.result}>{JSON.stringify(result(), null, 2)}</pre>
-      )}
-    </div>
-  );
-}
-
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, JSX.CSSProperties> = {
   container: {
-    fontFamily: "system-ui, -apple-system, sans-serif",
-    maxWidth: "800px",
+    "font-family": "system-ui, -apple-system, sans-serif",
+    "max-width": "800px",
     margin: "0 auto",
     padding: "2rem 1rem",
-    minHeight: "100vh",
+    "min-height": "100vh",
     display: "flex",
-    flexDirection: "column",
+    "flex-direction": "column",
   },
   header: {
-    textAlign: "center",
-    marginBottom: "2rem",
-    paddingBottom: "1rem",
-    borderBottom: "1px solid #e0e0e0",
+    "text-align": "center",
+    "margin-bottom": "2rem",
+    "padding-bottom": "1rem",
+    "border-bottom": "1px solid #e0e0e0",
   },
   title: {
     margin: 0,
-    fontSize: "2.5rem",
-    fontWeight: 600,
+    "font-size": "2.5rem",
+    "font-weight": 600,
     color: "#1a1a2e",
   },
   subtitle: {
     margin: "0.5rem 0 0",
     color: "#666",
-    fontSize: "1.1rem",
+    "font-size": "1.1rem",
   },
   main: {
     flex: 1,
   },
   section: {
-    marginBottom: "2rem",
+    "margin-bottom": "2rem",
   },
   sectionTitle: {
-    marginTop: 0,
-    marginBottom: "0.5rem",
-    fontSize: "1.3rem",
+    "margin-top": 0,
+    "margin-bottom": "0.5rem",
+    "font-size": "1.3rem",
     color: "#333",
   },
   description: {
-    marginBottom: "1rem",
+    "margin-bottom": "1rem",
     color: "#666",
-    lineHeight: 1.5,
+    "line-height": 1.5,
+  },
+  label: {
+    display: "block",
+    "margin-bottom": "0.4rem",
+    "font-weight": 600,
+    color: "#333",
+  },
+  input: {
+    width: "100%",
+    "box-sizing": "border-box",
+    padding: "0.65rem",
+    "margin-bottom": "1rem",
+    "font-size": "1rem",
+    border: "1px solid #ddd",
+    "border-radius": "4px",
   },
   textarea: {
     width: "100%",
+    "box-sizing": "border-box",
     padding: "0.75rem",
-    fontSize: "1rem",
-    fontFamily: "inherit",
+    "margin-bottom": "1rem",
+    "font-size": "1rem",
+    "font-family": "inherit",
     border: "1px solid #ddd",
-    borderRadius: "4px",
+    "border-radius": "4px",
     resize: "vertical",
-    boxSizing: "border-box",
-    marginBottom: "1rem",
-  },
-  buttonGroup: {
-    display: "flex",
-    gap: "0.5rem",
   },
   button: {
     padding: "0.75rem 1.5rem",
-    fontSize: "1rem",
-    fontWeight: 500,
+    "font-size": "1rem",
+    "font-weight": 500,
     color: "white",
-    backgroundColor: "#2563eb",
+    "background-color": "#2563eb",
     border: "none",
-    borderRadius: "4px",
+    "border-radius": "4px",
     cursor: "pointer",
-    transition: "background-color 0.2s",
   },
-  status: {
-    marginTop: "1rem",
+  error: {
+    "margin-top": "1rem",
     padding: "0.75rem 1rem",
-    borderRadius: "4px",
-    border: "1px solid",
+    color: "#721c24",
+    "background-color": "#f8d7da",
+    border: "1px solid #f5c6cb",
+    "border-radius": "4px",
   },
-  testContainer: {
-    display: "flex",
-    gap: "0.5rem",
-    flexWrap: "wrap",
-    alignItems: "center",
-    marginBottom: "1rem",
+  success: {
+    "margin-top": "1rem",
+    padding: "0.75rem 1rem",
+    color: "#155724",
+    "background-color": "#d4edda",
+    border: "1px solid #c3e6cb",
+    "border-radius": "4px",
   },
-  testInput: {
-    flex: 1,
-    minWidth: "200px",
-    padding: "0.5rem",
-    fontSize: "1rem",
-    border: "1px solid #ddd",
-    borderRadius: "4px",
-  },
-  result: {
-    backgroundColor: "#f5f5f5",
-    padding: "1rem",
-    borderRadius: "4px",
-    overflow: "auto",
-    maxHeight: "300px",
-    fontSize: "0.85rem",
-    lineHeight: 1.5,
+  resultTitle: {
+    "margin-top": 0,
   },
   footer: {
-    textAlign: "center",
-    paddingTop: "2rem",
-    borderTop: "1px solid #e0e0e0",
+    "text-align": "center",
+    "padding-top": "2rem",
+    "border-top": "1px solid #e0e0e0",
     color: "#999",
-    fontSize: "0.875rem",
+    "font-size": "0.875rem",
   },
 };
 
