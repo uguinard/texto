@@ -7,7 +7,28 @@
   background-color: #dbeafe;
 }
 
+.reader-token--known {
+  background-color: #dcfce7;
+}
+
 .reader-token--selected {
   outline: 1px solid #64748b;
   outline-offset: 1px;
+}
+
+.lexicon-state {
+  display: inline-block;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background-color: #f1f5f9;
+  color: #334155;
+  font-size: 0.85rem;
+}
+
+.lexicon-state--learning {
+  background-color: #dbeafe;
+}
+
+.lexicon-state--known {
+  background-color: #dcfce7;
 }

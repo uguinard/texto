@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -62,6 +63,8 @@ class TextRenderResponse(BaseModel):
 class VocabSaveRequest(BaseModel):
     text_id: int = Field(gt=0)
     token_id: int = Field(gt=0)
+    lemma: str | None = None
+    translation: str | None = None
 
 
 class VocabItemResponse(BaseModel):
@@ -69,7 +72,23 @@ class VocabItemResponse(BaseModel):
     surface: str
     lemma: str | None
     language: str
-    state: Literal["learning", "known"]
+    translation: str | None
+    state: Literal["new", "learning", "known"]
+
+
+class LexiconItemResponse(BaseModel):
+    vocab_item_id: int
+    language: str
+    lemma: str
+    surface_example: str
+    translation: str | None
+    state: Literal["new", "learning", "known"]
+    exposure_count: int
+    created_at: datetime
+
+
+class LexiconStateUpdate(BaseModel):
+    state: Literal["new", "learning", "known"]
 
 
 class LookupRequest(BaseModel):

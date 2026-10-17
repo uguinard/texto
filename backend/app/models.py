@@ -1,6 +1,16 @@
+from datetime import datetime, timezone
 from typing import ClassVar
 
 from sqlmodel import Field, Relationship, SQLModel
+
+
+class Lexeme(SQLModel, table=True):
+    __tablename__: ClassVar[str] = "lexemes"
+
+    id: int | None = Field(default=None, primary_key=True)
+    language: str = Field(index=True)
+    lemma: str
+    translation: str | None = None
 
 
 class Text(SQLModel, table=True):
@@ -52,3 +62,7 @@ class VocabItem(SQLModel, table=True):
     surface: str
     lemma: str | None = None
     state: str = Field(default="learning")
+    lexeme_id: int | None = Field(default=None, foreign_key="lexemes.id")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )

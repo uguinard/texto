@@ -1,6 +1,8 @@
 from pathlib import Path
 from collections.abc import Generator
+from datetime import datetime, timezone
 
+from sqlalchemy import inspect
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, SQLModel, col, create_engine, select
 
@@ -17,6 +19,7 @@ engine = create_engine(settings.database_url, connect_args=connect_args)
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
+    _migrate_vocabulary_table()
 
     from .models import Sentence, Token
     from .services.tokenizer import tokenize_sentence
@@ -40,6 +43,56 @@ def create_db_and_tables() -> None:
                 )
                 for index, part in enumerate(tokenize_sentence(sentence.content))
             )
+
+        session.commit()
+
+
+def _migrate_vocabulary_table() -> None:
+    from .models import Lexeme, VocabItem
+
+    columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("vocab_items")
+    }
+    with engine.begin() as connection:
+        if "lexeme_id" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE vocab_items ADD COLUMN lexeme_id "
+                "INTEGER REFERENCES lexemes(id)"
+            )
+        if "created_at" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE vocab_items ADD COLUMN created_at DATETIME"
+            )
+
+    with Session(engine) as session:
+        lexemes = list(session.exec(select(Lexeme)).all())
+        for item in session.exec(select(VocabItem)).all():
+            if item.created_at is None:
+                item.created_at = datetime.now(timezone.utc)
+            if item.lexeme_id is not None:
+                continue
+
+            lemma = (item.lemma or item.surface).strip()
+            lexeme = next(
+                (
+                    candidate
+                    for candidate in lexemes
+                    if candidate.language.casefold() == item.language.casefold()
+                    and candidate.lemma.casefold() == lemma.casefold()
+                ),
+                None,
+            )
+            if lexeme is None:
+                lexeme = Lexeme(
+                    language=item.language,
+                    lemma=lemma,
+                )
+                session.add(lexeme)
+                session.flush()
+                lexemes.append(lexeme)
+
+            item.lexeme_id = lexeme.id
 
         session.commit()
 

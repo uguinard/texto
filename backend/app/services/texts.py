@@ -96,19 +96,27 @@ def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None
     vocab_items = session.exec(
         select(VocabItem).where(VocabItem.language == text.language)
     ).all()
-    vocab_states: dict[str, Literal["learning", "known"]] = {}
+    vocab_states: dict[str, Literal["new", "learning", "known"]] = {}
     for item in vocab_items:
-        if item.state not in {"learning", "known"}:
+        if item.state == "new":
+            item_state: Literal["new", "learning", "known"] = "new"
+        elif item.state == "learning":
+            item_state = "learning"
+        elif item.state == "known":
+            item_state = "known"
+        else:
             continue
         for form in (item.surface, item.lemma):
             if form is None:
                 continue
             normalized_form = form.casefold()
             current_state = vocab_states.get(normalized_form)
-            if item.state == "known" or current_state is None:
-                vocab_states[normalized_form] = (
-                    "known" if item.state == "known" else "learning"
-                )
+            state_priority = {"new": 0, "learning": 1, "known": 2}
+            if (
+                current_state is None
+                or                 state_priority[item_state] > state_priority[current_state]
+            ):
+                vocab_states[normalized_form] = item_state
 
     if sentence_ids:
         tokens = session.exec(

@@ -28,7 +28,21 @@ type SavedVocabItem = {
   surface: string;
   lemma: string | null;
   language: string;
-  state: "learning" | "known";
+  translation: string | null;
+  state: "new" | "learning" | "known";
+};
+
+type LexiconState = "new" | "learning" | "known";
+
+type LexiconItem = {
+  vocab_item_id: number;
+  language: string;
+  lemma: string;
+  surface_example: string;
+  translation: string | null;
+  state: LexiconState;
+  exposure_count: number;
+  created_at: string;
 };
 
 type RenderedSentence = {
@@ -128,9 +142,47 @@ function isSavedVocabItem(value: unknown): value is SavedVocabItem {
     (typeof value.lemma === "string" || value.lemma === null) &&
     "language" in value &&
     typeof value.language === "string" &&
+    "translation" in value &&
+    (typeof value.translation === "string" || value.translation === null) &&
     "state" in value &&
-    (value.state === "learning" || value.state === "known")
+    (value.state === "new" ||
+      value.state === "learning" ||
+      value.state === "known")
   );
+}
+
+function isLexiconItem(value: unknown): value is LexiconItem {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  return (
+    "vocab_item_id" in value &&
+    typeof value.vocab_item_id === "number" &&
+    "language" in value &&
+    typeof value.language === "string" &&
+    "lemma" in value &&
+    typeof value.lemma === "string" &&
+    "surface_example" in value &&
+    typeof value.surface_example === "string" &&
+    "translation" in value &&
+    (typeof value.translation === "string" || value.translation === null) &&
+    "state" in value &&
+    (value.state === "new" ||
+      value.state === "learning" ||
+      value.state === "known") &&
+    "exposure_count" in value &&
+    typeof value.exposure_count === "number" &&
+    "created_at" in value &&
+    typeof value.created_at === "string"
+  );
+}
+
+function isLexiconList(value: unknown): value is LexiconItem[] {
+  return Array.isArray(value) && value.every(isLexiconItem);
+}
+
+function isLexiconState(value: string): value is LexiconState {
+  return value === "new" || value === "learning" || value === "known";
 }
 
 function isRenderedSentence(value: unknown): value is RenderedSentence {
@@ -210,6 +262,9 @@ function getErrorMessage(value: unknown): string | null {
 }
 
 function App() {
+  const [currentView, setCurrentView] = createSignal<"reader" | "lexicon">("reader");
+  const [lexiconFilter, setLexiconFilter] = createSignal<"all" | LexiconState>("all");
+  const [lexiconSearch, setLexiconSearch] = createSignal("");
   const [savedTexts, { refetch: refreshSavedTexts }] = createResource(
     async (): Promise<TextListItem[]> => {
       const response = await fetch("/api/texts");
@@ -219,6 +274,31 @@ function App() {
       }
       if (!isTextList(body)) {
         throw new Error("The backend returned an unexpected saved-text list.");
+      }
+      return body;
+    },
+  );
+  const [lexiconItems, { refetch: refreshLexicon }] = createResource(
+    () =>
+      currentView() === "lexicon"
+        ? [lexiconFilter(), lexiconSearch()] as const
+        : null,
+    async ([state, search]): Promise<LexiconItem[]> => {
+      const params = new URLSearchParams();
+      if (state !== "all") {
+        params.set("state", state);
+      }
+      if (search.trim()) {
+        params.set("search", search.trim());
+      }
+      const query = params.toString();
+      const response = await fetch(`/api/lexicon${query ? `?${query}` : ""}`);
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(getErrorMessage(body) ?? "Unable to load the lexicon.");
+      }
+      if (!isLexiconList(body)) {
+        throw new Error("The backend returned an unexpected lexicon response.");
       }
       return body;
     },
@@ -240,6 +320,95 @@ function App() {
   const [openingTextId, setOpeningTextId] = createSignal<number | null>(null);
   const [readerError, setReaderError] = createSignal<string | null>(null);
   const [readerRequestId, setReaderRequestId] = createSignal(0);
+  const [lexiconActionError, setLexiconActionError] = createSignal<string | null>(null);
+
+  const setReaderWordState = (
+    item: LexiconItem,
+    state: LexiconState,
+  ) => {
+    const text = renderedText();
+    if (
+      !text ||
+      text.language.toLocaleLowerCase() !== item.language.toLocaleLowerCase()
+    ) {
+      return;
+    }
+
+    const forms = new Set(
+      [item.surface_example, item.lemma].map((form) =>
+        form.toLocaleLowerCase(),
+      ),
+    );
+    setRenderedText((current) => {
+      if (!current || current.text_id !== text.text_id) {
+        return current;
+      }
+      return {
+        ...current,
+        sentences: current.sentences.map((sentence) => ({
+          ...sentence,
+          tokens: sentence.tokens.map((token) =>
+            forms.has(token.surface.toLocaleLowerCase())
+              ? { ...token, state }
+              : token,
+          ),
+        })),
+      };
+    });
+    setSelectedToken((token) =>
+      token && forms.has(token.surface.toLocaleLowerCase())
+        ? { ...token, state }
+        : token,
+    );
+  };
+
+  const changeLexiconState = async (
+    item: LexiconItem,
+    state: LexiconState,
+  ) => {
+    try {
+      const response = await fetch(`/api/lexicon/${item.vocab_item_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(getErrorMessage(body) ?? "Unable to update this word.");
+      }
+      if (!isLexiconItem(body)) {
+        throw new Error("The backend returned an unexpected lexicon item.");
+      }
+      setReaderWordState(body, body.state);
+      await refreshLexicon();
+    } catch (requestError) {
+      setLexiconActionError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to update this word.",
+      );
+    }
+  };
+
+  const deleteLexiconItem = async (item: LexiconItem) => {
+    try {
+      const response = await fetch(`/api/lexicon/${item.vocab_item_id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const body: unknown = await response.json();
+        throw new Error(getErrorMessage(body) ?? "Unable to delete this word.");
+      }
+      setReaderWordState(item, "new");
+      await refreshLexicon();
+    } catch (requestError) {
+      setLexiconActionError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to delete this word.",
+      );
+    }
+  };
 
   const fetchRenderedText = async (textId: number): Promise<RenderedText> => {
     const response = await fetch(`/api/texts/${textId}/render`);
@@ -360,7 +529,12 @@ function App() {
       const response = await fetch("/api/vocab", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text_id: text.text_id, token_id: token.id }),
+        body: JSON.stringify({
+          text_id: text.text_id,
+          token_id: token.id,
+          lemma: lookupResult()?.lemma ?? null,
+          translation: lookupResult()?.translation ?? null,
+        }),
       });
       const body: unknown = await response.json();
       if (!response.ok) {
@@ -396,6 +570,9 @@ function App() {
       setSelectedToken((current) =>
         current?.id === token.id ? { ...current, state: body.state } : current,
       );
+      if (currentView() === "lexicon") {
+        void refreshLexicon();
+      }
     } catch (requestError) {
       setSaveVocabError(
         requestError instanceof Error
@@ -462,7 +639,32 @@ function App() {
         <p style={styles.subtitle}>Personal Language-Learning Reader</p>
       </header>
 
+      <nav style={styles.navigation} aria-label="Main navigation">
+        <button
+          style={currentView() === "reader" ? styles.navButtonActive : styles.navButton}
+          type="button"
+          aria-current={currentView() === "reader" ? "page" : undefined}
+          onClick={() => setCurrentView("reader")}
+        >
+          Reader
+        </button>
+        <button
+          style={currentView() === "lexicon" ? styles.navButtonActive : styles.navButton}
+          type="button"
+          aria-current={currentView() === "lexicon" ? "page" : undefined}
+          onClick={() => {
+            closeLookup();
+            setLexiconActionError(null);
+            setCurrentView("lexicon");
+          }}
+        >
+          Lexicon
+        </button>
+      </nav>
+
       <main style={styles.main}>
+        <Show when={currentView() === "reader"}>
+          <>
         <section style={styles.section} aria-label="Saved texts">
           <h2 style={styles.sectionTitle}>Saved texts</h2>
           <Show when={savedTexts.loading}>
@@ -625,9 +827,155 @@ function App() {
             )}
           </Show>
         </section>
+          </>
+        </Show>
+
+        <Show when={currentView() === "lexicon"}>
+          <section style={styles.section} aria-label="Lexicon">
+            <h2 style={styles.sectionTitle}>Lexicon</h2>
+            <p style={styles.description}>
+              Saved words and their exposure in your imported texts.
+            </p>
+
+            <div style={styles.lexiconFilters} aria-label="Filter lexicon by state">
+              <button
+                style={lexiconFilter() === "all" ? styles.filterButtonActive : styles.filterButton}
+                type="button"
+                aria-pressed={lexiconFilter() === "all"}
+                onClick={() => setLexiconFilter("all")}
+              >
+                All
+              </button>
+              <button
+                style={lexiconFilter() === "new" ? styles.filterButtonActive : styles.filterButton}
+                type="button"
+                aria-pressed={lexiconFilter() === "new"}
+                onClick={() => setLexiconFilter("new")}
+              >
+                New
+              </button>
+              <button
+                style={lexiconFilter() === "learning" ? styles.filterButtonActive : styles.filterButton}
+                type="button"
+                aria-pressed={lexiconFilter() === "learning"}
+                onClick={() => setLexiconFilter("learning")}
+              >
+                Learning
+              </button>
+              <button
+                style={lexiconFilter() === "known" ? styles.filterButtonActive : styles.filterButton}
+                type="button"
+                aria-pressed={lexiconFilter() === "known"}
+                onClick={() => setLexiconFilter("known")}
+              >
+                Known
+              </button>
+            </div>
+
+            <label style={styles.label} for="lexicon-search">
+              Search words
+            </label>
+            <input
+              id="lexicon-search"
+              style={styles.input}
+              type="search"
+              value={lexiconSearch()}
+              onInput={(event) => setLexiconSearch(event.currentTarget.value)}
+              placeholder="Search lemma..."
+            />
+
+            <Show when={lexiconItems.loading}>
+              <p style={styles.description}>Loading lexicon…</p>
+            </Show>
+            <Show when={lexiconItems.error}>
+              <p style={styles.error} role="alert">
+                {lexiconItems.error instanceof Error
+                  ? lexiconItems.error.message
+                  : "Unable to load the lexicon."}
+              </p>
+            </Show>
+            <Show when={lexiconActionError()}>
+              <p style={styles.error} role="alert">{lexiconActionError()}</p>
+            </Show>
+            <Show when={!lexiconItems.loading && !lexiconItems.error}>
+              <Show
+                when={(lexiconItems()?.length ?? 0) > 0}
+                fallback={<p style={styles.description}>No matching saved words.</p>}
+              >
+                <div style={styles.tableWrapper}>
+                  <table style={styles.lexiconTable}>
+                    <thead>
+                      <tr>
+                        <th style={styles.tableCell}>Word</th>
+                        <th style={styles.tableCell}>Translation</th>
+                        <th style={styles.tableCell}>State</th>
+                        <th style={styles.tableCell}>Exposure count</th>
+                        <th style={styles.tableCell}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <For each={lexiconItems() ?? []}>
+                        {(item) => (
+                          <tr>
+                            <td style={styles.tableCell}>
+                              <strong>{item.lemma}</strong>
+                              <div style={styles.surfaceExample}>
+                                Example form: {item.surface_example}
+                              </div>
+                            </td>
+                            <td style={styles.tableCell}>
+                              {item.translation ?? "—"}
+                            </td>
+                            <td style={styles.tableCell}>
+                              <span class={`lexicon-state lexicon-state--${item.state}`}>
+                                {item.state}
+                              </span>
+                            </td>
+                            <td style={styles.tableCell}>{item.exposure_count}</td>
+                            <td style={styles.tableCell}>
+                              <label style={styles.visuallyHidden} for={`state-${item.vocab_item_id}`}>
+                                State for {item.lemma}
+                              </label>
+                              <select
+                                id={`state-${item.vocab_item_id}`}
+                                style={styles.stateSelect}
+                                value={item.state}
+                                onChange={(event) => {
+                                  const state = event.currentTarget.value;
+                                  if (isLexiconState(state)) {
+                                    setLexiconActionError(null);
+                                    void changeLexiconState(item, state);
+                                  }
+                                }}
+                              >
+                                <option value="new">New</option>
+                                <option value="learning">Learning</option>
+                                <option value="known">Known</option>
+                              </select>
+                              <button
+                                style={styles.deleteButton}
+                                type="button"
+                                onClick={() => {
+                                  setLexiconActionError(null);
+                                  void deleteLexiconItem(item);
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+              </Show>
+            </Show>
+          </section>
+        </Show>
       </main>
 
-      <Show when={selectedToken()}>
+      <Show when={currentView() === "reader" && selectedToken()}>
         {(token) => (
           <aside style={styles.tokenPopup} role="status" aria-live="polite">
             <div style={styles.lookupContent}>
@@ -712,6 +1060,28 @@ const styles: Record<string, JSX.CSSProperties> = {
     "padding-bottom": "1rem",
     "border-bottom": "1px solid #e0e0e0",
   },
+  navigation: {
+    display: "flex",
+    "justify-content": "center",
+    gap: "0.5rem",
+    "margin-bottom": "1.5rem",
+  },
+  navButton: {
+    padding: "0.6rem 1rem",
+    color: "#334155",
+    "background-color": "#f8fafc",
+    border: "1px solid #cbd5e1",
+    "border-radius": "4px",
+    cursor: "pointer",
+  },
+  navButtonActive: {
+    padding: "0.6rem 1rem",
+    color: "white",
+    "background-color": "#2563eb",
+    border: "1px solid #2563eb",
+    "border-radius": "4px",
+    cursor: "pointer",
+  },
   title: {
     margin: 0,
     "font-size": "2.5rem",
@@ -776,6 +1146,72 @@ const styles: Record<string, JSX.CSSProperties> = {
     "margin-bottom": "0.5rem",
     "font-size": "1.3rem",
     color: "#333",
+  },
+  lexiconFilters: {
+    display: "flex",
+    gap: "0.5rem",
+    "flex-wrap": "wrap",
+    "margin-bottom": "1rem",
+  },
+  filterButton: {
+    padding: "0.5rem 0.75rem",
+    color: "#334155",
+    "background-color": "#f8fafc",
+    border: "1px solid #cbd5e1",
+    "border-radius": "4px",
+    cursor: "pointer",
+  },
+  filterButtonActive: {
+    padding: "0.5rem 0.75rem",
+    color: "white",
+    "background-color": "#475569",
+    border: "1px solid #475569",
+    "border-radius": "4px",
+    cursor: "pointer",
+  },
+  tableWrapper: {
+    "overflow-x": "auto",
+  },
+  lexiconTable: {
+    width: "100%",
+    "border-collapse": "collapse",
+    "text-align": "left",
+  },
+  tableCell: {
+    padding: "0.75rem",
+    "border-bottom": "1px solid #e2e8f0",
+    "vertical-align": "top",
+  },
+  surfaceExample: {
+    color: "#64748b",
+    "font-size": "0.85rem",
+    "margin-top": "0.25rem",
+  },
+  stateSelect: {
+    padding: "0.45rem",
+    "margin-right": "0.5rem",
+    "margin-bottom": "0.25rem",
+    "border-radius": "4px",
+    border: "1px solid #cbd5e1",
+  },
+  deleteButton: {
+    padding: "0.45rem 0.6rem",
+    color: "#334155",
+    "background-color": "white",
+    border: "1px solid #cbd5e1",
+    "border-radius": "4px",
+    cursor: "pointer",
+  },
+  visuallyHidden: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    padding: 0,
+    margin: "-1px",
+    overflow: "hidden",
+    clip: "rect(0, 0, 0, 0)",
+    "white-space": "nowrap",
+    border: 0,
   },
   description: {
     "margin-bottom": "1rem",
