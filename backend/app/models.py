@@ -66,3 +66,30 @@ class VocabItem(SQLModel, table=True):
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
+    mastery: float = Field(default=0.5)
+
+
+class PracticeCard(SQLModel, table=True):
+    __tablename__: ClassVar[str] = "practice_cards"
+
+    id: int | None = Field(default=None, primary_key=True)
+    vocab_item_id: int = Field(foreign_key="vocab_items.id", ondelete="CASCADE")
+    card_type: str = Field(default="cloze")
+    sentence: str
+    answer: str
+    hint: str | None = None
+
+
+class ReviewLog(SQLModel, table=True):
+    __tablename__: ClassVar[str] = "review_logs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    card_id: int = Field(foreign_key="practice_cards.id", ondelete="CASCADE")
+    vocab_item_id: int = Field(foreign_key="vocab_items.id", ondelete="CASCADE")
+    correct: bool
+    answer_given: str
+    mastery_before: float
+    mastery_after: float
+    reviewed_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )

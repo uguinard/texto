@@ -91,6 +91,28 @@ class LexiconStateUpdate(BaseModel):
     state: Literal["new", "learning", "known"]
 
 
+class PracticeCardResponse(BaseModel):
+    id: int
+    vocab_item_id: int
+    card_type: Literal["cloze"]
+    sentence: str
+    answer: str
+    hint: str | None
+
+
+class PracticeReviewRequest(BaseModel):
+    card_id: int = Field(gt=0)
+    vocab_item_id: int = Field(gt=0)
+    correct: bool
+    answer_given: str
+
+
+class PracticeReviewResponse(BaseModel):
+    card_id: int
+    vocab_item_id: int
+    mastery: float
+
+
 class LookupRequest(BaseModel):
     text_id: int = Field(gt=0)
     token_id: int = Field(gt=0)

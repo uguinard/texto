@@ -45,6 +45,21 @@ type LexiconItem = {
   created_at: string;
 };
 
+type PracticeCard = {
+  id: number;
+  vocab_item_id: number;
+  card_type: "cloze";
+  sentence: string;
+  answer: string;
+  hint: string | null;
+};
+
+type PracticeReview = {
+  card_id: number;
+  vocab_item_id: number;
+  mastery: number;
+};
+
 type RenderedSentence = {
   id: number;
   position: number;
@@ -185,6 +200,44 @@ function isLexiconState(value: string): value is LexiconState {
   return value === "new" || value === "learning" || value === "known";
 }
 
+function isPracticeCard(value: unknown): value is PracticeCard {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  return (
+    "id" in value &&
+    typeof value.id === "number" &&
+    "vocab_item_id" in value &&
+    typeof value.vocab_item_id === "number" &&
+    "card_type" in value &&
+    value.card_type === "cloze" &&
+    "sentence" in value &&
+    typeof value.sentence === "string" &&
+    "answer" in value &&
+    typeof value.answer === "string" &&
+    "hint" in value &&
+    (typeof value.hint === "string" || value.hint === null)
+  );
+}
+
+function isPracticeCardList(value: unknown): value is PracticeCard[] {
+  return Array.isArray(value) && value.every(isPracticeCard);
+}
+
+function isPracticeReview(value: unknown): value is PracticeReview {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  return (
+    "card_id" in value &&
+    typeof value.card_id === "number" &&
+    "vocab_item_id" in value &&
+    typeof value.vocab_item_id === "number" &&
+    "mastery" in value &&
+    typeof value.mastery === "number"
+  );
+}
+
 function isRenderedSentence(value: unknown): value is RenderedSentence {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -262,7 +315,7 @@ function getErrorMessage(value: unknown): string | null {
 }
 
 function App() {
-  const [currentView, setCurrentView] = createSignal<"reader" | "lexicon">("reader");
+  const [currentView, setCurrentView] = createSignal<"reader" | "lexicon" | "practice">("reader");
   const [lexiconFilter, setLexiconFilter] = createSignal<"all" | LexiconState>("all");
   const [lexiconSearch, setLexiconSearch] = createSignal("");
   const [savedTexts, { refetch: refreshSavedTexts }] = createResource(
@@ -321,6 +374,17 @@ function App() {
   const [readerError, setReaderError] = createSignal<string | null>(null);
   const [readerRequestId, setReaderRequestId] = createSignal(0);
   const [lexiconActionError, setLexiconActionError] = createSignal<string | null>(null);
+  const [practiceCards, setPracticeCards] = createSignal<PracticeCard[]>([]);
+  const [practiceLoading, setPracticeLoading] = createSignal(false);
+  const [practiceError, setPracticeError] = createSignal<string | null>(null);
+  const [practiceIndex, setPracticeIndex] = createSignal(0);
+  const [practiceAnswer, setPracticeAnswer] = createSignal("");
+  const [practiceChecked, setPracticeChecked] = createSignal(false);
+  const [practiceSubmitting, setPracticeSubmitting] = createSignal(false);
+  const [practiceCorrect, setPracticeCorrect] = createSignal(0);
+  const [practiceReviewed, setPracticeReviewed] = createSignal(0);
+  const [practiceAnswerCorrect, setPracticeAnswerCorrect] = createSignal(false);
+  const [practiceReviewError, setPracticeReviewError] = createSignal<string | null>(null);
 
   const setReaderWordState = (
     item: LexiconItem,
@@ -420,6 +484,90 @@ function App() {
       throw new Error("The backend returned an unexpected reader response.");
     }
     return body;
+  };
+
+  const loadPracticeSession = async () => {
+    setPracticeLoading(true);
+    setPracticeError(null);
+    setPracticeReviewError(null);
+    setPracticeCards([]);
+    setPracticeIndex(0);
+    setPracticeAnswer("");
+    setPracticeChecked(false);
+    setPracticeCorrect(0);
+    setPracticeReviewed(0);
+    try {
+      const response = await fetch("/api/practice/session");
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(getErrorMessage(body) ?? "Unable to load practice cards.");
+      }
+      if (!isPracticeCardList(body)) {
+        throw new Error("The backend returned an unexpected practice session.");
+      }
+      setPracticeCards(body);
+    } catch (requestError) {
+      setPracticeError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to load practice cards.",
+      );
+    } finally {
+      setPracticeLoading(false);
+    }
+  };
+
+  const checkPracticeAnswer = async () => {
+    const card = practiceCards()[practiceIndex()];
+    const answerGiven = practiceAnswer().trim();
+    if (!card || !answerGiven || practiceSubmitting() || practiceChecked()) {
+      return;
+    }
+
+    const correct =
+      answerGiven.toLocaleLowerCase() === card.answer.trim().toLocaleLowerCase();
+    setPracticeSubmitting(true);
+    setPracticeReviewError(null);
+    try {
+      const response = await fetch("/api/practice/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          card_id: card.id,
+          vocab_item_id: card.vocab_item_id,
+          correct,
+          answer_given: answerGiven,
+        }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(getErrorMessage(body) ?? "Unable to record this review.");
+      }
+      if (!isPracticeReview(body)) {
+        throw new Error("The backend returned an unexpected review response.");
+      }
+      setPracticeAnswerCorrect(correct);
+      setPracticeChecked(true);
+      setPracticeReviewed((count) => count + 1);
+      if (correct) {
+        setPracticeCorrect((count) => count + 1);
+      }
+    } catch (requestError) {
+      setPracticeReviewError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to record this review.",
+      );
+    } finally {
+      setPracticeSubmitting(false);
+    }
+  };
+
+  const nextPracticeCard = () => {
+    setPracticeIndex((index) => index + 1);
+    setPracticeAnswer("");
+    setPracticeChecked(false);
+    setPracticeReviewError(null);
   };
 
   const openSavedText = async (textId: number) => {
@@ -659,6 +807,18 @@ function App() {
           }}
         >
           Lexicon
+        </button>
+        <button
+          style={currentView() === "practice" ? styles.navButtonActive : styles.navButton}
+          type="button"
+          aria-current={currentView() === "practice" ? "page" : undefined}
+          onClick={() => {
+            closeLookup();
+            setCurrentView("practice");
+            void loadPracticeSession();
+          }}
+        >
+          Practice
         </button>
       </nav>
 
@@ -973,6 +1133,127 @@ function App() {
             </Show>
           </section>
         </Show>
+
+        <Show when={currentView() === "practice"}>
+          <section style={styles.section} aria-label="Practice">
+            <h2 style={styles.sectionTitle}>Cloze practice</h2>
+            <p style={styles.description}>
+              Recall a saved word in the sentence where you encountered it.
+            </p>
+
+            <Show when={practiceLoading()}>
+              <p style={styles.description}>Preparing a short practice session…</p>
+            </Show>
+            <Show when={practiceError()}>
+              <p style={styles.error} role="alert">{practiceError()}</p>
+            </Show>
+            <Show when={!practiceLoading() && !practiceError()}>
+              <Show
+                when={practiceCards().length > 0}
+                fallback={
+                  <p style={styles.description}>
+                    No learning words with sentence context yet. Save a word from the Reader to practice it here.
+                  </p>
+                }
+              >
+                <Show
+                  when={practiceIndex() < practiceCards().length}
+                  fallback={
+                    <div style={styles.practiceSummary} role="status">
+                      <h3 style={styles.practiceTitle}>Session complete</h3>
+                      <p>
+                        You answered {practiceCorrect()} of {practiceReviewed()} correctly.
+                      </p>
+                      <p>
+                        {practiceCorrect() === practiceReviewed()
+                          ? "Nice work recalling each word in context."
+                          : "Good practice. These words will be ready to revisit."}
+                      </p>
+                      <button
+                        style={styles.button}
+                        type="button"
+                        onClick={() => void loadPracticeSession()}
+                      >
+                        Practice again
+                      </button>
+                    </div>
+                  }
+                >
+                  <div style={styles.practiceCard}>
+                    <p style={styles.practiceProgress}>
+                      Card {practiceIndex() + 1} of {practiceCards().length}
+                    </p>
+                    <p style={styles.clozeSentence}>
+                      {practiceCards()[practiceIndex()]?.sentence}
+                    </p>
+                    <Show when={practiceCards()[practiceIndex()]?.hint}>
+                      <p style={styles.practiceHint}>
+                        Hint: {practiceCards()[practiceIndex()]?.hint}
+                      </p>
+                    </Show>
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void checkPracticeAnswer();
+                      }}
+                    >
+                      <label style={styles.label} for="practice-answer">
+                        Your answer
+                      </label>
+                      <input
+                        id="practice-answer"
+                        style={styles.input}
+                        type="text"
+                        value={practiceAnswer()}
+                        onInput={(event) =>
+                          setPracticeAnswer(event.currentTarget.value)
+                        }
+                        disabled={practiceChecked() || practiceSubmitting()}
+                        autocomplete="off"
+                        required
+                      />
+                      <Show
+                        when={!practiceChecked()}
+                        fallback={
+                          <div style={styles.practiceFeedback} role="status">
+                            <p>
+                              {practiceAnswerCorrect()
+                                ? "Correct — you recalled the word in context."
+                                : "Not quite, but this is useful practice."}
+                            </p>
+                            <p>
+                              Answer: <strong>{practiceCards()[practiceIndex()]?.answer}</strong>
+                            </p>
+                            <button
+                              style={styles.button}
+                              type="button"
+                              onClick={nextPracticeCard}
+                            >
+                              Next
+                            </button>
+                          </div>
+                        }
+                      >
+                        <button
+                          style={styles.button}
+                          type="submit"
+                          disabled={!practiceAnswer().trim() || practiceSubmitting()}
+                        >
+                          {practiceSubmitting() ? "Checking…" : "Check"}
+                        </button>
+                      </Show>
+                    </form>
+                    <Show when={practiceReviewError()}>
+                      <p style={styles.practiceFeedback} role="alert">
+                        {practiceReviewError()}
+                      </p>
+                    </Show>
+                  </div>
+                </Show>
+              </Show>
+            </Show>
+          </section>
+        </Show>
       </main>
 
       <Show when={currentView() === "reader" && selectedToken()}>
@@ -1271,6 +1552,45 @@ const styles: Record<string, JSX.CSSProperties> = {
     "border-radius": "4px",
   },
   resultTitle: {
+    "margin-top": 0,
+  },
+  practiceCard: {
+    "margin-top": "1.5rem",
+    padding: "1.25rem",
+    border: "1px solid #dbe3ec",
+    "border-radius": "6px",
+    "background-color": "#fbfdff",
+  },
+  practiceProgress: {
+    color: "#64748b",
+    "font-size": "0.9rem",
+    "margin-top": 0,
+  },
+  clozeSentence: {
+    "font-size": "1.25rem",
+    "line-height": 1.8,
+  },
+  practiceHint: {
+    color: "#475569",
+    "font-size": "0.95rem",
+  },
+  practiceFeedback: {
+    "margin-top": "1rem",
+    padding: "0.75rem",
+    color: "#334155",
+    "background-color": "#f1f5f9",
+    border: "1px solid #cbd5e1",
+    "border-radius": "4px",
+  },
+  practiceSummary: {
+    "margin-top": "1.5rem",
+    padding: "1.25rem",
+    color: "#334155",
+    "background-color": "#f1f5f9",
+    border: "1px solid #cbd5e1",
+    "border-radius": "6px",
+  },
+  practiceTitle: {
     "margin-top": 0,
   },
   reader: {

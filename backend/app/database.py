@@ -19,6 +19,7 @@ engine = create_engine(settings.database_url, connect_args=connect_args)
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
+    _migrate_practice_columns()
     _migrate_vocabulary_table()
 
     from .models import Sentence, Token
@@ -95,6 +96,18 @@ def _migrate_vocabulary_table() -> None:
             item.lexeme_id = lexeme.id
 
         session.commit()
+
+
+def _migrate_practice_columns() -> None:
+    columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("vocab_items")
+    }
+    if "mastery" not in columns:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE vocab_items ADD COLUMN mastery FLOAT NOT NULL DEFAULT 0.5"
+            )
 
 
 def get_session() -> Generator[Session, None, None]:

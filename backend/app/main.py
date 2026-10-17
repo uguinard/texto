@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from .config import settings
 from .database import create_db_and_tables
 from .routers.lookup import router as lookup_router
+from .routers.practice import router as practice_router
 from .routers.texts import router as texts_router
 from .routers.vocabulary import router as vocabulary_router
 
@@ -29,6 +30,7 @@ app = FastAPI(
 app.include_router(texts_router)
 app.include_router(lookup_router)
 app.include_router(vocabulary_router)
+app.include_router(practice_router)
 
 # CORS for local development
 app.add_middleware(
