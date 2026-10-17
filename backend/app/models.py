@@ -42,3 +42,13 @@ class Token(SQLModel, table=True):
     whitespace_after: str = ""
 
     sentence: Sentence = Relationship(back_populates="tokens")
+
+
+class VocabItem(SQLModel, table=True):
+    __tablename__: ClassVar[str] = "vocab_items"
+
+    id: int | None = Field(default=None, primary_key=True)
+    language: str = Field(index=True)
+    surface: str
+    lemma: str | None = None
+    state: str = Field(default="learning")

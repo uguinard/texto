@@ -1,0 +1,13 @@
+.reader-token {
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.reader-token--learning {
+  background-color: #dbeafe;
+}
+
+.reader-token--selected {
+  outline: 1px solid #64748b;
+  outline-offset: 1px;
+}

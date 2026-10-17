@@ -1,5 +1,12 @@
-import { createSignal, For, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
+import "./App.css";
+
+type TextListItem = {
+  id: number;
+  title: string;
+  language: string;
+};
 
 type TextImportResult = {
   id: number;
@@ -13,6 +20,15 @@ type RenderedToken = {
   sentence_id: number;
   order_index: number;
   whitespace_after: string;
+  state: "new" | "learning" | "known";
+};
+
+type SavedVocabItem = {
+  id: number;
+  surface: string;
+  lemma: string | null;
+  language: string;
+  state: "learning" | "known";
 };
 
 type RenderedSentence = {
@@ -40,6 +56,25 @@ type LookupResponse = {
   confidence: "high" | "medium" | "low";
   uncertain: boolean;
 };
+
+function isTextListItem(value: unknown): value is TextListItem {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return (
+    "id" in value &&
+    typeof value.id === "number" &&
+    "title" in value &&
+    typeof value.title === "string" &&
+    "language" in value &&
+    typeof value.language === "string"
+  );
+}
+
+function isTextList(value: unknown): value is TextListItem[] {
+  return Array.isArray(value) && value.every(isTextListItem);
+}
 
 function isTextImportResult(value: unknown): value is TextImportResult {
   if (typeof value !== "object" || value === null) {
@@ -71,7 +106,30 @@ function isRenderedToken(value: unknown): value is RenderedToken {
     "order_index" in value &&
     typeof value.order_index === "number" &&
     "whitespace_after" in value &&
-    typeof value.whitespace_after === "string"
+    typeof value.whitespace_after === "string" &&
+    "state" in value &&
+    (value.state === "new" ||
+      value.state === "learning" ||
+      value.state === "known")
+  );
+}
+
+function isSavedVocabItem(value: unknown): value is SavedVocabItem {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return (
+    "id" in value &&
+    typeof value.id === "number" &&
+    "surface" in value &&
+    typeof value.surface === "string" &&
+    "lemma" in value &&
+    (typeof value.lemma === "string" || value.lemma === null) &&
+    "language" in value &&
+    typeof value.language === "string" &&
+    "state" in value &&
+    (value.state === "learning" || value.state === "known")
   );
 }
 
@@ -152,6 +210,19 @@ function getErrorMessage(value: unknown): string | null {
 }
 
 function App() {
+  const [savedTexts, { refetch: refreshSavedTexts }] = createResource(
+    async (): Promise<TextListItem[]> => {
+      const response = await fetch("/api/texts");
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(getErrorMessage(body) ?? "Unable to load saved texts.");
+      }
+      if (!isTextList(body)) {
+        throw new Error("The backend returned an unexpected saved-text list.");
+      }
+      return body;
+    },
+  );
   const [title, setTitle] = createSignal("");
   const [language, setLanguage] = createSignal("");
   const [rawText, setRawText] = createSignal("");
@@ -162,8 +233,53 @@ function App() {
   const [lookupLoading, setLookupLoading] = createSignal(false);
   const [lookupError, setLookupError] = createSignal<string | null>(null);
   const [lookupRequestId, setLookupRequestId] = createSignal(0);
+  const [savingVocab, setSavingVocab] = createSignal(false);
+  const [saveVocabError, setSaveVocabError] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [importing, setImporting] = createSignal(false);
+  const [openingTextId, setOpeningTextId] = createSignal<number | null>(null);
+  const [readerError, setReaderError] = createSignal<string | null>(null);
+  const [readerRequestId, setReaderRequestId] = createSignal(0);
+
+  const fetchRenderedText = async (textId: number): Promise<RenderedText> => {
+    const response = await fetch(`/api/texts/${textId}/render`);
+    const body: unknown = await response.json();
+    if (!response.ok) {
+      throw new Error(getErrorMessage(body) ?? "Unable to open this text.");
+    }
+    if (!isRenderedText(body)) {
+      throw new Error("The backend returned an unexpected reader response.");
+    }
+    return body;
+  };
+
+  const openSavedText = async (textId: number) => {
+    const requestId = readerRequestId() + 1;
+    setReaderRequestId(requestId);
+    setOpeningTextId(textId);
+    setReaderError(null);
+    setResult(null);
+    closeLookup();
+
+    try {
+      const text = await fetchRenderedText(textId);
+      if (requestId === readerRequestId()) {
+        setRenderedText(text);
+      }
+    } catch (requestError) {
+      if (requestId === readerRequestId()) {
+        setReaderError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Unable to open this text.",
+        );
+      }
+    } finally {
+      if (requestId === readerRequestId()) {
+        setOpeningTextId(null);
+      }
+    }
+  };
 
   const handleTokenClick = async (
     token: RenderedToken,
@@ -176,6 +292,7 @@ function App() {
     setLookupResult(null);
     setLookupError(null);
     setLookupLoading(true);
+    setSaveVocabError(null);
 
     try {
       const response = await fetch("/api/lookup", {
@@ -226,14 +343,78 @@ function App() {
     setLookupResult(null);
     setLookupError(null);
     setLookupLoading(false);
+    setSaveVocabError(null);
+  };
+
+  const saveSelectedToken = async () => {
+    const token = selectedToken();
+    const text = renderedText();
+    if (!token || !text || token.state !== "new" || savingVocab()) {
+      return;
+    }
+
+    setSavingVocab(true);
+    setSaveVocabError(null);
+
+    try {
+      const response = await fetch("/api/vocab", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text_id: text.text_id, token_id: token.id }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        setSaveVocabError(getErrorMessage(body) ?? "Unable to save this word.");
+        return;
+      }
+      if (!isSavedVocabItem(body)) {
+        setSaveVocabError("The backend returned an unexpected saved-word response.");
+        return;
+      }
+
+      const savedForms = new Set(
+        [body.surface, body.lemma].filter((form): form is string => form !== null)
+          .map((form) => form.toLocaleLowerCase()),
+      );
+      setRenderedText((current) => {
+        if (!current || current.text_id !== text.text_id) {
+          return current;
+        }
+
+        return {
+          ...current,
+          sentences: current.sentences.map((sentence) => ({
+            ...sentence,
+            tokens: sentence.tokens.map((sentenceToken) =>
+              savedForms.has(sentenceToken.surface.toLocaleLowerCase())
+                ? { ...sentenceToken, state: body.state }
+                : sentenceToken,
+            ),
+          })),
+        };
+      });
+      setSelectedToken((current) =>
+        current?.id === token.id ? { ...current, state: body.state } : current,
+      );
+    } catch (requestError) {
+      setSaveVocabError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to reach the vocabulary service.",
+      );
+    } finally {
+      setSavingVocab(false);
+    }
   };
 
   const handleImport = async () => {
+    setReaderRequestId(readerRequestId() + 1);
     setLookupRequestId(lookupRequestId() + 1);
     setImporting(true);
     setError(null);
     setResult(null);
     setRenderedText(null);
+    setReaderError(null);
     closeLookup();
 
     try {
@@ -261,22 +442,8 @@ function App() {
       setResult(body);
       setTitle("");
       setRawText("");
-
-      const renderResponse = await fetch(`/api/texts/${body.id}/render`);
-      const renderBody: unknown = await renderResponse.json();
-      if (!renderResponse.ok) {
-        setError(
-          getErrorMessage(renderBody) ?? "Text saved, but its reader view could not be loaded.",
-        );
-        return;
-      }
-
-      if (!isRenderedText(renderBody)) {
-        setError("Text saved, but the backend returned an unexpected reader response.");
-        return;
-      }
-
-      setRenderedText(renderBody);
+      void refreshSavedTexts();
+      await openSavedText(body.id);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -296,6 +463,50 @@ function App() {
       </header>
 
       <main style={styles.main}>
+        <section style={styles.section} aria-label="Saved texts">
+          <h2 style={styles.sectionTitle}>Saved texts</h2>
+          <Show when={savedTexts.loading}>
+            <p style={styles.description}>Loading saved texts…</p>
+          </Show>
+          <Show when={savedTexts.error}>
+            <p style={styles.error} role="alert">
+              {savedTexts.error instanceof Error
+                ? savedTexts.error.message
+                : "Unable to load saved texts."}
+            </p>
+          </Show>
+          <Show when={!savedTexts.loading && !savedTexts.error}>
+            <Show
+              when={(savedTexts()?.length ?? 0) > 0}
+              fallback={<p style={styles.description}>No saved texts yet.</p>}
+            >
+              <ul style={styles.textList}>
+                <For each={savedTexts() ?? []}>
+                  {(savedText) => (
+                    <li style={styles.textListItem}>
+                      <button
+                        style={
+                          openingTextId() === savedText.id
+                            ? styles.savedTextButtonActive
+                            : styles.savedTextButton
+                        }
+                        type="button"
+                        disabled={openingTextId() !== null}
+                        onClick={() => void openSavedText(savedText.id)}
+                      >
+                        <strong>{savedText.title}</strong>
+                        <span style={styles.savedTextLanguage}>
+                          {savedText.language}
+                        </span>
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </Show>
+        </section>
+
         <section style={styles.section}>
           <h2 style={styles.sectionTitle}>Import a text</h2>
           <p style={styles.description}>
@@ -357,6 +568,16 @@ function App() {
             </div>
           </Show>
 
+          <Show when={readerError()}>
+            <div style={styles.error} role="alert">
+              {readerError()}
+            </div>
+          </Show>
+
+          <Show when={openingTextId() !== null}>
+            <p style={styles.description}>Opening saved text…</p>
+          </Show>
+
           <Show when={result()}>
             <div style={styles.success} role="status">
               <h3 style={styles.resultTitle}>Text saved</h3>
@@ -378,11 +599,7 @@ function App() {
                         {(token) => (
                           <>
                             <span
-                              style={
-                                selectedToken()?.id === token.id
-                                  ? styles.selectedToken
-                                  : styles.token
-                              }
+                              class={`reader-token reader-token--${token.state}${selectedToken()?.id === token.id ? " reader-token--selected" : ""}`}
                               role="button"
                               tabIndex={0}
                               onClick={() =>
@@ -439,6 +656,26 @@ function App() {
                   </div>
                 )}
               </Show>
+              <Show when={token().state !== "new"}>
+                <p style={styles.savedWordState}>
+                  Saved · {token().state}
+                </p>
+              </Show>
+              <Show when={token().state === "new"}>
+                <button
+                  style={styles.saveWordButton}
+                  type="button"
+                  disabled={savingVocab()}
+                  onClick={() => void saveSelectedToken()}
+                >
+                  {savingVocab() ? "Saving..." : "Save word"}
+                </button>
+              </Show>
+              <Show when={saveVocabError()}>
+                <p style={styles.lookupError} role="alert">
+                  {saveVocabError()}
+                </p>
+              </Show>
             </div>
             <button
               style={styles.closePopup}
@@ -491,6 +728,48 @@ const styles: Record<string, JSX.CSSProperties> = {
   },
   section: {
     "margin-bottom": "2rem",
+  },
+  textList: {
+    margin: 0,
+    padding: 0,
+    "list-style": "none",
+    display: "grid",
+    gap: "0.5rem",
+  },
+  textListItem: {
+    margin: 0,
+  },
+  savedTextButton: {
+    width: "100%",
+    display: "flex",
+    "justify-content": "space-between",
+    "align-items": "center",
+    gap: "1rem",
+    padding: "0.75rem",
+    color: "#1f2937",
+    "text-align": "left",
+    "background-color": "#f8fafc",
+    border: "1px solid #e2e8f0",
+    "border-radius": "4px",
+    cursor: "pointer",
+  },
+  savedTextButtonActive: {
+    width: "100%",
+    display: "flex",
+    "justify-content": "space-between",
+    "align-items": "center",
+    gap: "1rem",
+    padding: "0.75rem",
+    color: "#1d4ed8",
+    "text-align": "left",
+    "background-color": "#dbeafe",
+    border: "1px solid #93c5fd",
+    "border-radius": "4px",
+    cursor: "pointer",
+  },
+  savedTextLanguage: {
+    color: "#64748b",
+    "font-size": "0.9rem",
   },
   sectionTitle: {
     "margin-top": 0,
@@ -573,14 +852,17 @@ const styles: Record<string, JSX.CSSProperties> = {
   sentence: {
     "margin-bottom": "1rem",
   },
-  token: {
+  saveWordButton: {
+    padding: "0.4rem 0.65rem",
+    color: "#1f2937",
+    "background-color": "white",
+    border: "none",
+    "border-radius": "4px",
     cursor: "pointer",
-    "border-radius": "2px",
   },
-  selectedToken: {
-    cursor: "pointer",
-    "border-radius": "2px",
-    "background-color": "#dbeafe",
+  savedWordState: {
+    color: "#bfdbfe",
+    "font-size": "0.875rem",
   },
   tokenPopup: {
     position: "fixed",

@@ -1,13 +1,15 @@
 import re
+from typing import Literal
 
 from sqlmodel import Session, col, select
 
-from ..models import Sentence, Text, Token
+from ..models import Sentence, Text, Token, VocabItem
 from ..schemas import (
     RenderedSentence,
     RenderedToken,
     TextImportRequest,
     TextImportResponse,
+    TextListItem,
     TextRenderResponse,
 )
 from .tokenizer import tokenize_sentence
@@ -68,6 +70,15 @@ def create_text(session: Session, request: TextImportRequest) -> TextImportRespo
     )
 
 
+def list_texts(session: Session) -> list[TextListItem]:
+    texts = session.exec(select(Text).order_by(col(Text.id).desc())).all()
+    return [
+        TextListItem(id=text.id, title=text.title, language=text.language)
+        for text in texts
+        if text.id is not None
+    ]
+
+
 def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None:
     text = session.get(Text, text_id)
     if text is None:
@@ -82,6 +93,22 @@ def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None
     tokens_by_sentence: dict[int, list[RenderedToken]] = {
         sentence_id: [] for sentence_id in sentence_ids
     }
+    vocab_items = session.exec(
+        select(VocabItem).where(VocabItem.language == text.language)
+    ).all()
+    vocab_states: dict[str, Literal["learning", "known"]] = {}
+    for item in vocab_items:
+        if item.state not in {"learning", "known"}:
+            continue
+        for form in (item.surface, item.lemma):
+            if form is None:
+                continue
+            normalized_form = form.casefold()
+            current_state = vocab_states.get(normalized_form)
+            if item.state == "known" or current_state is None:
+                vocab_states[normalized_form] = (
+                    "known" if item.state == "known" else "learning"
+                )
 
     if sentence_ids:
         tokens = session.exec(
@@ -99,6 +126,7 @@ def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None
                     sentence_id=token.sentence_id,
                     order_index=token.order_index,
                     whitespace_after=token.whitespace_after,
+                    state=vocab_states.get(token.surface.casefold(), "new"),
                 )
             )
 

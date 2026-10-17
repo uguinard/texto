@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from ..database import get_session
-from ..schemas import TextImportRequest, TextImportResponse, TextRenderResponse
-from ..services.texts import create_text, get_text_render
+from ..schemas import TextImportRequest, TextImportResponse, TextListItem, TextRenderResponse
+from ..services.texts import create_text, get_text_render, list_texts
 
 
 router = APIRouter(prefix="/api/texts", tags=["texts"])
@@ -15,6 +15,13 @@ def import_text(
     session: Session = Depends(get_session),
 ) -> TextImportResponse:
     return create_text(session, request)
+
+
+@router.get("", response_model=list[TextListItem])
+def get_texts(
+    session: Session = Depends(get_session),
+) -> list[TextListItem]:
+    return list_texts(session)
 
 
 @router.get("/{text_id}/render", response_model=TextRenderResponse)

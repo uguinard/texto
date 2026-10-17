@@ -30,12 +30,19 @@ class TextImportResponse(BaseModel):
     approximate_token_count: int
 
 
+class TextListItem(BaseModel):
+    id: int
+    title: str
+    language: str
+
+
 class RenderedToken(BaseModel):
     id: int
     surface: str
     sentence_id: int
     order_index: int
     whitespace_after: str
+    state: Literal["new", "learning", "known"]
 
 
 class RenderedSentence(BaseModel):
@@ -50,6 +57,19 @@ class TextRenderResponse(BaseModel):
     title: str
     language: str
     sentences: list[RenderedSentence]
+
+
+class VocabSaveRequest(BaseModel):
+    text_id: int = Field(gt=0)
+    token_id: int = Field(gt=0)
+
+
+class VocabItemResponse(BaseModel):
+    id: int
+    surface: str
+    lemma: str | None
+    language: str
+    state: Literal["learning", "known"]
 
 
 class LookupRequest(BaseModel):
