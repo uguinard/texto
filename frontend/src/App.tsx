@@ -23,6 +23,24 @@ type RenderedToken = {
   state: "new" | "learning" | "known";
 };
 
+type AnnotationCategory =
+  | "lexical"
+  | "syntactic"
+  | "pragmatic"
+  | "metaphor"
+  | "discourse";
+
+type ReaderAnnotation = {
+  id: number;
+  text_id: number;
+  sentence_id: number;
+  start_token_id: number;
+  end_token_id: number;
+  category: AnnotationCategory;
+  note: string | null;
+  created_at: string;
+};
+
 type SavedVocabItem = {
   id: number;
   surface: string;
@@ -142,6 +160,96 @@ function isRenderedToken(value: unknown): value is RenderedToken {
       value.state === "learning" ||
       value.state === "known")
   );
+}
+
+function isAnnotationCategory(value: string): value is AnnotationCategory {
+  return (
+    value === "lexical" ||
+    value === "syntactic" ||
+    value === "pragmatic" ||
+    value === "metaphor" ||
+    value === "discourse"
+  );
+}
+
+function isReaderAnnotation(value: unknown): value is ReaderAnnotation {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  return (
+    "id" in value &&
+    typeof value.id === "number" &&
+    "text_id" in value &&
+    typeof value.text_id === "number" &&
+    "sentence_id" in value &&
+    typeof value.sentence_id === "number" &&
+    "start_token_id" in value &&
+    typeof value.start_token_id === "number" &&
+    "end_token_id" in value &&
+    typeof value.end_token_id === "number" &&
+    "category" in value &&
+    typeof value.category === "string" &&
+    isAnnotationCategory(value.category) &&
+    "note" in value &&
+    (typeof value.note === "string" || value.note === null) &&
+    "created_at" in value &&
+    typeof value.created_at === "string"
+  );
+}
+
+function isReaderAnnotationList(value: unknown): value is ReaderAnnotation[] {
+  return Array.isArray(value) && value.every(isReaderAnnotation);
+}
+
+function getAnnotationForToken(
+  annotations: ReaderAnnotation[],
+  sentence: RenderedSentence,
+  token: RenderedToken,
+): ReaderAnnotation | undefined {
+  const tokenOrder = token.order_index;
+  return annotations.find((annotation) => {
+    if (annotation.sentence_id !== sentence.id) {
+      return false;
+    }
+    const start = sentence.tokens.find(
+      (sentenceToken) => sentenceToken.id === annotation.start_token_id,
+    );
+    const end = sentence.tokens.find(
+      (sentenceToken) => sentenceToken.id === annotation.end_token_id,
+    );
+    return (
+      start !== undefined &&
+      end !== undefined &&
+      tokenOrder >= start.order_index &&
+      tokenOrder <= end.order_index
+    );
+  });
+}
+
+function getAnnotationText(
+  annotation: ReaderAnnotation,
+  text: RenderedText,
+): string {
+  const sentence = text.sentences.find(
+    (candidate) => candidate.id === annotation.sentence_id,
+  );
+  if (!sentence) {
+    return "";
+  }
+  const start = sentence.tokens.findIndex(
+    (token) => token.id === annotation.start_token_id,
+  );
+  const end = sentence.tokens.findIndex(
+    (token) => token.id === annotation.end_token_id,
+  );
+  if (start < 0 || end < start) {
+    return "";
+  }
+  return sentence.tokens
+    .slice(start, end + 1)
+    .map((token) => `${token.surface}${token.whitespace_after}`)
+    .join("")
+    .trim();
 }
 
 function isSavedVocabItem(value: unknown): value is SavedVocabItem {
@@ -371,7 +479,14 @@ function App() {
   const [rawText, setRawText] = createSignal("");
   const [result, setResult] = createSignal<TextImportResult | null>(null);
   const [renderedText, setRenderedText] = createSignal<RenderedText | null>(null);
+  const [readerAnnotations, setReaderAnnotations] = createSignal<ReaderAnnotation[]>([]);
   const [selectedToken, setSelectedToken] = createSignal<RenderedToken | null>(null);
+  const [annotationStart, setAnnotationStart] = createSignal<RenderedToken | null>(null);
+  const [annotationEnd, setAnnotationEnd] = createSignal<RenderedToken | null>(null);
+  const [annotationCategory, setAnnotationCategory] = createSignal<AnnotationCategory>("lexical");
+  const [annotationNote, setAnnotationNote] = createSignal("");
+  const [annotationSaving, setAnnotationSaving] = createSignal(false);
+  const [annotationError, setAnnotationError] = createSignal<string | null>(null);
   const [lookupResult, setLookupResult] = createSignal<LookupResponse | null>(null);
   const [lookupLoading, setLookupLoading] = createSignal(false);
   const [lookupError, setLookupError] = createSignal<string | null>(null);
@@ -496,6 +611,95 @@ function App() {
     return body;
   };
 
+  const fetchTextAnnotations = async (
+    textId: number,
+  ): Promise<ReaderAnnotation[]> => {
+    const response = await fetch(`/api/texts/${textId}/annotations`);
+    const body: unknown = await response.json();
+    if (!response.ok) {
+      throw new Error(getErrorMessage(body) ?? "Unable to load annotations.");
+    }
+    if (!isReaderAnnotationList(body)) {
+      throw new Error("The backend returned an unexpected annotations response.");
+    }
+    return body;
+  };
+
+  const hasAnnotationSelection = () => {
+    const start = annotationStart();
+    const end = annotationEnd();
+    return Boolean(start && end);
+  };
+
+  const isInAnnotationSelection = (token: RenderedToken) => {
+    const start = annotationStart();
+    const end = annotationEnd();
+    if (!start || !end || token.sentence_id !== start.sentence_id) {
+      return false;
+    }
+    const lowerBound = Math.min(start.order_index, end.order_index);
+    const upperBound = Math.max(start.order_index, end.order_index);
+    return token.order_index >= lowerBound && token.order_index <= upperBound;
+  };
+
+  const cancelAnnotation = () => {
+    setAnnotationStart(null);
+    setAnnotationEnd(null);
+    setAnnotationNote("");
+    setAnnotationError(null);
+  };
+
+  const saveAnnotation = async () => {
+    const text = renderedText();
+    const start = annotationStart();
+    const end = annotationEnd();
+    if (
+      !text ||
+      !start ||
+      !end ||
+      start.sentence_id !== end.sentence_id ||
+      annotationSaving()
+    ) {
+      return;
+    }
+    const firstToken = start.order_index <= end.order_index ? start : end;
+    const lastToken = start.order_index <= end.order_index ? end : start;
+
+    setAnnotationSaving(true);
+    setAnnotationError(null);
+    try {
+      const response = await fetch("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text_id: text.text_id,
+          sentence_id: firstToken.sentence_id,
+          start_token_id: firstToken.id,
+          end_token_id: lastToken.id,
+          category: annotationCategory(),
+          note: annotationNote().trim() || null,
+        }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(getErrorMessage(body) ?? "Unable to save this annotation.");
+      }
+      if (!isReaderAnnotation(body)) {
+        throw new Error("The backend returned an unexpected annotation response.");
+      }
+      setReaderAnnotations((current) => [...current, body]);
+      cancelAnnotation();
+    } catch (requestError) {
+      setAnnotationError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to save this annotation.",
+      );
+    } finally {
+      setAnnotationSaving(false);
+    }
+  };
+
   const loadPracticeSession = async () => {
     setPracticeLoading(true);
     setPracticeError(null);
@@ -589,9 +793,15 @@ function App() {
     closeLookup();
 
     try {
-      const text = await fetchRenderedText(textId);
+      setReaderAnnotations([]);
+      cancelAnnotation();
+      const [text, annotations] = await Promise.all([
+        fetchRenderedText(textId),
+        fetchTextAnnotations(textId),
+      ]);
       if (requestId === readerRequestId()) {
         setRenderedText(text);
+        setReaderAnnotations(annotations);
       }
     } catch (requestError) {
       if (requestId === readerRequestId()) {
@@ -612,7 +822,23 @@ function App() {
     token: RenderedToken,
     sentence: RenderedSentence,
     text: RenderedText,
+    shiftKey = false,
   ) => {
+    const start = annotationStart();
+    if (shiftKey && start) {
+      if (start.sentence_id !== token.sentence_id) {
+        setAnnotationError("Select the end of a highlight in the same sentence.");
+        return;
+      }
+      setAnnotationEnd(token);
+      setAnnotationError(null);
+      closeLookup();
+      return;
+    }
+    setAnnotationStart(token);
+    setAnnotationEnd(null);
+    setAnnotationError(null);
+
     const requestId = lookupRequestId() + 1;
     setLookupRequestId(requestId);
     setSelectedToken(token);
@@ -968,31 +1194,123 @@ function App() {
                   {(sentence) => (
                     <p style={styles.sentence}>
                       <For each={sentence.tokens}>
-                        {(token) => (
-                          <>
-                            <span
-                              class={`reader-token reader-token--${token.state}${selectedToken()?.id === token.id ? " reader-token--selected" : ""}`}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() =>
-                                void handleTokenClick(token, sentence, text())
-                              }
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" || event.key === " ") {
-                                  event.preventDefault();
-                                  void handleTokenClick(token, sentence, text());
+                        {(token) => {
+                          const annotation = () =>
+                            getAnnotationForToken(
+                              readerAnnotations(),
+                              sentence,
+                              token,
+                            );
+                          return (
+                            <>
+                              <span
+                                class={`reader-token reader-token--${token.state}${selectedToken()?.id === token.id ? " reader-token--selected" : ""}${isInAnnotationSelection(token) ? " reader-token--range-selected" : ""}${annotation() ? ` reader-token--annotation-${annotation()?.category}` : ""}`}
+                                title={annotation()?.note ?? annotation()?.category}
+                                role="button"
+                                tabIndex={0}
+                                onClick={(event) =>
+                                  void handleTokenClick(
+                                    token,
+                                    sentence,
+                                    text(),
+                                    event.shiftKey,
+                                  )
                                 }
-                              }}
-                            >
-                              {token.surface}
-                            </span>
-                            {token.whitespace_after}
-                          </>
-                        )}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    void handleTokenClick(token, sentence, text());
+                                  }
+                                }}
+                              >
+                                {token.surface}
+                              </span>
+                              {token.whitespace_after}
+                            </>
+                          );
+                        }}
                       </For>
                     </p>
                   )}
                 </For>
+                <Show when={hasAnnotationSelection()}>
+                  <section
+                    style={styles.annotationPanel}
+                    aria-label="Save text annotation"
+                  >
+                    <h3 style={styles.annotationTitle}>Annotate selected text</h3>
+                    <label style={styles.label} for="annotation-category">
+                      Category
+                    </label>
+                    <select
+                      id="annotation-category"
+                      style={styles.input}
+                      value={annotationCategory()}
+                      onChange={(event) => {
+                        const category = event.currentTarget.value;
+                        if (isAnnotationCategory(category)) {
+                          setAnnotationCategory(category);
+                        }
+                      }}
+                    >
+                      <option value="lexical">Lexical</option>
+                      <option value="syntactic">Syntactic</option>
+                      <option value="pragmatic">Pragmatic</option>
+                      <option value="metaphor">Metaphor</option>
+                      <option value="discourse">Discourse</option>
+                    </select>
+                    <label style={styles.label} for="annotation-note">
+                      Note (optional)
+                    </label>
+                    <textarea
+                      id="annotation-note"
+                      style={styles.textarea}
+                      value={annotationNote()}
+                      onInput={(event) => setAnnotationNote(event.currentTarget.value)}
+                      rows={3}
+                    />
+                    <div style={styles.annotationActions}>
+                      <button
+                        style={styles.button}
+                        type="button"
+                        disabled={annotationSaving()}
+                        onClick={() => void saveAnnotation()}
+                      >
+                        {annotationSaving() ? "Saving…" : "Save annotation"}
+                      </button>
+                      <button
+                        style={styles.filterButton}
+                        type="button"
+                        disabled={annotationSaving()}
+                        onClick={cancelAnnotation}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <Show when={annotationError()}>
+                      <p style={styles.error} role="alert">
+                        {annotationError()}
+                      </p>
+                    </Show>
+                  </section>
+                </Show>
+                <Show when={readerAnnotations().length > 0}>
+                  <section aria-label="Saved annotations">
+                    <h3 style={styles.annotationTitle}>Saved annotations</h3>
+                    <ul style={styles.annotationList}>
+                      <For each={readerAnnotations()}>
+                        {(annotation) => (
+                          <li>
+                            <strong>{getAnnotationText(annotation, text())}</strong>
+                            {" · "}
+                            {annotation.category}
+                            {annotation.note ? ` — ${annotation.note}` : ""}
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </section>
+                </Show>
               </section>
             )}
           </Show>
@@ -1615,6 +1933,28 @@ const styles: Record<string, JSX.CSSProperties> = {
   },
   practiceTitle: {
     "margin-top": 0,
+  },
+  annotationPanel: {
+    "margin-top": "1rem",
+    padding: "1rem",
+    border: "1px solid #cbd5e1",
+    "border-radius": "6px",
+    "background-color": "#f8fafc",
+  },
+  annotationTitle: {
+    "margin-top": 0,
+    "font-size": "1.05rem",
+  },
+  annotationActions: {
+    display: "flex",
+    gap: "0.5rem",
+    "align-items": "center",
+    "flex-wrap": "wrap",
+  },
+  annotationList: {
+    "padding-left": "1.25rem",
+    color: "#334155",
+    "line-height": 1.6,
   },
   reader: {
     "margin-top": "2rem",

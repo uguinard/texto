@@ -54,6 +54,21 @@ class Token(SQLModel, table=True):
     sentence: Sentence = Relationship(back_populates="tokens")
 
 
+class Annotation(SQLModel, table=True):
+    __tablename__: ClassVar[str] = "annotations"
+
+    id: int | None = Field(default=None, primary_key=True)
+    text_id: int = Field(foreign_key="texts.id", ondelete="CASCADE")
+    sentence_id: int = Field(foreign_key="sentences.id", ondelete="CASCADE")
+    start_token_id: int = Field(foreign_key="tokens.id", ondelete="CASCADE")
+    end_token_id: int = Field(foreign_key="tokens.id", ondelete="CASCADE")
+    category: str
+    note: str | None = None
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+
 class VocabItem(SQLModel, table=True):
     __tablename__: ClassVar[str] = "vocab_items"
 

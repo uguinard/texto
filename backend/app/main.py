@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from .config import settings
 from .database import create_db_and_tables
+from .routers.annotations import router as annotations_router
 from .routers.lookup import router as lookup_router
 from .routers.practice import router as practice_router
 from .routers.texts import router as texts_router
@@ -28,6 +29,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(texts_router)
+app.include_router(annotations_router)
 app.include_router(lookup_router)
 app.include_router(vocabulary_router)
 app.include_router(practice_router)

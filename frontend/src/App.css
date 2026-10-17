@@ -16,6 +16,46 @@
   outline-offset: 1px;
 }
 
+.reader-token--range-selected {
+  outline: 2px solid #334155;
+  outline-offset: 1px;
+}
+
+.reader-token--annotation-lexical {
+  background-color: #dbeafe;
+  text-decoration: underline;
+  text-decoration-color: #2563eb;
+  text-decoration-thickness: 2px;
+}
+
+.reader-token--annotation-syntactic {
+  background-color: #dcfce7;
+  text-decoration: underline;
+  text-decoration-color: #16a34a;
+  text-decoration-thickness: 2px;
+}
+
+.reader-token--annotation-pragmatic {
+  background-color: #f3e8ff;
+  text-decoration: underline;
+  text-decoration-color: #9333ea;
+  text-decoration-thickness: 2px;
+}
+
+.reader-token--annotation-metaphor {
+  background-color: #ffedd5;
+  text-decoration: underline;
+  text-decoration-color: #ea580c;
+  text-decoration-thickness: 2px;
+}
+
+.reader-token--annotation-discourse {
+  background-color: #ccfbf1;
+  text-decoration: underline;
+  text-decoration-color: #0d9488;
+  text-decoration-thickness: 2px;
+}
+
 .lexicon-state {
   display: inline-block;
   padding: 0.2rem 0.45rem;

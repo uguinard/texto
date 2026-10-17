@@ -4,6 +4,15 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+AnnotationCategory = Literal[
+    "lexical",
+    "syntactic",
+    "pragmatic",
+    "metaphor",
+    "discourse",
+]
+
+
 class TextImportRequest(BaseModel):
     title: str = Field(min_length=1)
     language: str = Field(min_length=1)
@@ -58,6 +67,33 @@ class TextRenderResponse(BaseModel):
     title: str
     language: str
     sentences: list[RenderedSentence]
+
+
+class AnnotationCreateRequest(BaseModel):
+    text_id: int = Field(gt=0)
+    sentence_id: int = Field(gt=0)
+    start_token_id: int = Field(gt=0)
+    end_token_id: int = Field(gt=0)
+    category: AnnotationCategory
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class AnnotationResponse(BaseModel):
+    id: int
+    text_id: int
+    sentence_id: int
+    start_token_id: int
+    end_token_id: int
+    category: AnnotationCategory
+    note: str | None
+    created_at: datetime
 
 
 class VocabSaveRequest(BaseModel):
