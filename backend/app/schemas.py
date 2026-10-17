@@ -26,3 +26,25 @@ class TextImportResponse(BaseModel):
     id: int
     sentence_count: int
     approximate_token_count: int
+
+
+class RenderedToken(BaseModel):
+    id: int
+    surface: str
+    sentence_id: int
+    order_index: int
+    whitespace_after: str
+
+
+class RenderedSentence(BaseModel):
+    id: int
+    position: int
+    content: str
+    tokens: list[RenderedToken]
+
+
+class TextRenderResponse(BaseModel):
+    text_id: int
+    title: str
+    language: str
+    sentences: list[RenderedSentence]

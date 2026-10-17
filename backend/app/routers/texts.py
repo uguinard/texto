@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from ..database import get_session
-from ..schemas import TextImportRequest, TextImportResponse
-from ..services.texts import create_text
+from ..schemas import TextImportRequest, TextImportResponse, TextRenderResponse
+from ..services.texts import create_text, get_text_render
 
 
 router = APIRouter(prefix="/api/texts", tags=["texts"])
@@ -15,3 +15,14 @@ def import_text(
     session: Session = Depends(get_session),
 ) -> TextImportResponse:
     return create_text(session, request)
+
+
+@router.get("/{text_id}/render", response_model=TextRenderResponse)
+def render_text(
+    text_id: int,
+    session: Session = Depends(get_session),
+) -> TextRenderResponse:
+    rendered_text = get_text_render(session, text_id)
+    if rendered_text is None:
+        raise HTTPException(status_code=404, detail="Text not found.")
+    return rendered_text

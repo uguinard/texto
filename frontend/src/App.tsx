@@ -1,10 +1,32 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 
 type TextImportResult = {
   id: number;
   sentence_count: number;
   approximate_token_count: number;
+};
+
+type RenderedToken = {
+  id: number;
+  surface: string;
+  sentence_id: number;
+  order_index: number;
+  whitespace_after: string;
+};
+
+type RenderedSentence = {
+  id: number;
+  position: number;
+  content: string;
+  tokens: RenderedToken[];
+};
+
+type RenderedText = {
+  text_id: number;
+  title: string;
+  language: string;
+  sentences: RenderedSentence[];
 };
 
 function isTextImportResult(value: unknown): value is TextImportResult {
@@ -22,6 +44,61 @@ function isTextImportResult(value: unknown): value is TextImportResult {
   );
 }
 
+function isRenderedToken(value: unknown): value is RenderedToken {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return (
+    "id" in value &&
+    typeof value.id === "number" &&
+    "surface" in value &&
+    typeof value.surface === "string" &&
+    "sentence_id" in value &&
+    typeof value.sentence_id === "number" &&
+    "order_index" in value &&
+    typeof value.order_index === "number" &&
+    "whitespace_after" in value &&
+    typeof value.whitespace_after === "string"
+  );
+}
+
+function isRenderedSentence(value: unknown): value is RenderedSentence {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return (
+    "id" in value &&
+    typeof value.id === "number" &&
+    "position" in value &&
+    typeof value.position === "number" &&
+    "content" in value &&
+    typeof value.content === "string" &&
+    "tokens" in value &&
+    Array.isArray(value.tokens) &&
+    value.tokens.every(isRenderedToken)
+  );
+}
+
+function isRenderedText(value: unknown): value is RenderedText {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return (
+    "text_id" in value &&
+    typeof value.text_id === "number" &&
+    "title" in value &&
+    typeof value.title === "string" &&
+    "language" in value &&
+    typeof value.language === "string" &&
+    "sentences" in value &&
+    Array.isArray(value.sentences) &&
+    value.sentences.every(isRenderedSentence)
+  );
+}
+
 function getErrorMessage(value: unknown): string | null {
   if (typeof value !== "object" || value === null || !("detail" in value)) {
     return null;
@@ -35,6 +112,8 @@ function App() {
   const [language, setLanguage] = createSignal("");
   const [rawText, setRawText] = createSignal("");
   const [result, setResult] = createSignal<TextImportResult | null>(null);
+  const [renderedText, setRenderedText] = createSignal<RenderedText | null>(null);
+  const [selectedToken, setSelectedToken] = createSignal<RenderedToken | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [importing, setImporting] = createSignal(false);
 
@@ -42,6 +121,8 @@ function App() {
     setImporting(true);
     setError(null);
     setResult(null);
+    setRenderedText(null);
+    setSelectedToken(null);
 
     try {
       const response = await fetch("/api/texts", {
@@ -68,6 +149,22 @@ function App() {
       setResult(body);
       setTitle("");
       setRawText("");
+
+      const renderResponse = await fetch(`/api/texts/${body.id}/render`);
+      const renderBody: unknown = await renderResponse.json();
+      if (!renderResponse.ok) {
+        setError(
+          getErrorMessage(renderBody) ?? "Text saved, but its reader view could not be loaded.",
+        );
+        return;
+      }
+
+      if (!isRenderedText(renderBody)) {
+        setError("Text saved, but the backend returned an unexpected reader response.");
+        return;
+      }
+
+      setRenderedText(renderBody);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -156,8 +253,64 @@ function App() {
               <p>Approximate tokens: {result()?.approximate_token_count}</p>
             </div>
           </Show>
+
+          <Show when={renderedText()}>
+            {(text) => (
+              <section style={styles.reader} aria-label="Imported text">
+                <h2 style={styles.sectionTitle}>{text().title}</h2>
+                <p style={styles.readerLanguage}>{text().language}</p>
+                <For each={text().sentences}>
+                  {(sentence) => (
+                    <p style={styles.sentence}>
+                      <For each={sentence.tokens}>
+                        {(token) => (
+                          <>
+                            <span
+                              style={
+                                selectedToken()?.id === token.id
+                                  ? styles.selectedToken
+                                  : styles.token
+                              }
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setSelectedToken(token)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  setSelectedToken(token);
+                                }
+                              }}
+                            >
+                              {token.surface}
+                            </span>
+                            {token.whitespace_after}
+                          </>
+                        )}
+                      </For>
+                    </p>
+                  )}
+                </For>
+              </section>
+            )}
+          </Show>
         </section>
       </main>
+
+      <Show when={selectedToken()}>
+        {(token) => (
+          <aside style={styles.tokenPopup} role="status" aria-live="polite">
+            <span>{token().surface}</span>
+            <button
+              style={styles.closePopup}
+              type="button"
+              aria-label="Close selected word"
+              onClick={() => setSelectedToken(null)}
+            >
+              ×
+            </button>
+          </aside>
+        )}
+      </Show>
 
       <footer style={styles.footer}>
         <p>Lector — Local-first language learning</p>
@@ -264,6 +417,52 @@ const styles: Record<string, JSX.CSSProperties> = {
   },
   resultTitle: {
     "margin-top": 0,
+  },
+  reader: {
+    "margin-top": "2rem",
+    padding: "1rem",
+    border: "1px solid #e0e0e0",
+    "border-radius": "4px",
+    "line-height": 1.8,
+  },
+  readerLanguage: {
+    "margin-top": "-0.5rem",
+    color: "#666",
+    "font-size": "0.9rem",
+  },
+  sentence: {
+    "margin-bottom": "1rem",
+  },
+  token: {
+    cursor: "pointer",
+    "border-radius": "2px",
+  },
+  selectedToken: {
+    cursor: "pointer",
+    "border-radius": "2px",
+    "background-color": "#dbeafe",
+  },
+  tokenPopup: {
+    position: "fixed",
+    right: "1rem",
+    bottom: "1rem",
+    display: "flex",
+    "align-items": "center",
+    gap: "1rem",
+    padding: "0.75rem 1rem",
+    color: "white",
+    "background-color": "#1f2937",
+    "border-radius": "6px",
+    "box-shadow": "0 4px 12px rgba(0, 0, 0, 0.2)",
+    "z-index": 10,
+  },
+  closePopup: {
+    padding: 0,
+    color: "white",
+    "background-color": "transparent",
+    border: "none",
+    "font-size": "1.25rem",
+    cursor: "pointer",
   },
   footer: {
     "text-align": "center",
