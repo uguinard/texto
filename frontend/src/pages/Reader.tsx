@@ -417,6 +417,7 @@ export default function Reader() {
   let layoutObserver: ResizeObserver | undefined;
   let suppressTokenClickUntil = 0;
   const [selectedToken, setSelectedToken] = createSignal<SelectedToken | null>(null);
+  const [lastPanelColumn, setLastPanelColumn] = createSignal<2 | 3>(2);
   const [wordSelection, setWordSelection] = createSignal<WordSelection | null>(null);
   const [pointerSelection, setPointerSelection] =
     createSignal<PointerSelection | null>(null);
@@ -583,7 +584,7 @@ export default function Reader() {
     if (column === 1 || column === 3) {
       return 2;
     }
-    return column === 2 ? 3 : null;
+    return column === 2 ? 3 : lastPanelColumn();
   });
   const annotationRange = createMemo(() => {
     const start = annotationStart();
@@ -639,6 +640,17 @@ export default function Reader() {
     setAnnotationError(null);
   };
 
+  const toggleKeyboardHelp = () => {
+    setShortcutsOpen((open) => {
+      const nextOpen = !open;
+      if (nextOpen) {
+        setSaveSelectionMessage(null);
+        setSaveSelectionError(null);
+      }
+      return nextOpen;
+    });
+  };
+
   const saveLearningSelection = async () => {
     const currentText = text();
     if (!currentText || savingSelection()) {
@@ -686,14 +698,7 @@ export default function Reader() {
         setSaveSelectionError("Focus a word or select a word range before saving.");
         return;
       }
-      const saved = await saveWord(focusedToken);
-      if (saved) {
-        setSaveSelectionMessage(`Saved “${focusedToken.surface}” to your Lexicon.`);
-      } else {
-        setSaveSelectionError(
-          saveWordError() ?? "Unable to save the focused word.",
-        );
-      }
+      await saveWord(focusedToken);
       return;
     }
 
@@ -784,7 +789,7 @@ export default function Reader() {
       }
       if (event.key === "?") {
         event.preventDefault();
-        setShortcutsOpen((open) => !open);
+        toggleKeyboardHelp();
       } else if (event.key.toLocaleLowerCase() === "s") {
         event.preventDefault();
         void saveLearningSelection();
@@ -993,6 +998,11 @@ export default function Reader() {
     }
     const selected: SelectedToken = { ...token, column };
     setSelectedToken(selected);
+    setLastPanelColumn(column === 2 ? 3 : 2);
+    setShortcutsOpen(false);
+    setSaveSelectionMessage(null);
+    setSaveSelectionError(null);
+    setSaveWordError(null);
     setAnnotationStart(token);
     setAnnotationEnd(null);
     setAnnotationError(null);
@@ -1062,6 +1072,8 @@ export default function Reader() {
     const tokenLookup = selectedToken()?.id === token.id ? lookup() : null;
     setSavingWord(true);
     setSaveWordError(null);
+    setSaveSelectionMessage(null);
+    setSaveSelectionError(null);
     try {
       const response = await fetch("/api/vocab", {
         method: "POST",
@@ -1112,13 +1124,18 @@ export default function Reader() {
       setSelectedToken((current) =>
         current?.id === token.id ? { ...current, state: savedState } : current,
       );
+      setSaveSelectionMessage(`Saved “${token.surface}” to your Lexicon.`);
+      setSelectedToken(null);
+      setLookup(null);
+      setLookupError(null);
       return true;
     } catch (requestError) {
-      setSaveWordError(
+      const message =
         requestError instanceof Error
           ? requestError.message
-          : "Unable to save this word.",
-      );
+          : "Unable to save this word.";
+      setSaveWordError(message);
+      setSaveSelectionError(message);
       return false;
     } finally {
       setSavingWord(false);
@@ -1204,8 +1221,8 @@ export default function Reader() {
                 class="secondary-button"
                 type="button"
                 aria-expanded={shortcutsOpen()}
-                aria-controls="reader-shortcuts"
-                onClick={() => setShortcutsOpen((open) => !open)}
+                aria-controls="reader-panel"
+                onClick={toggleKeyboardHelp}
               >
                 Keyboard help
               </button>
@@ -1217,44 +1234,6 @@ export default function Reader() {
                 Back to Library
               </button>
             </div>
-            <Show when={shortcutsOpen()}>
-              <aside
-                id="reader-shortcuts"
-                class="reader-shortcuts"
-                aria-label="Reader keyboard shortcuts"
-              >
-                <div class="reader-shortcuts__heading">
-                  <h3>Keyboard shortcuts</h3>
-                  <button
-                    class="secondary-button"
-                    type="button"
-                    onClick={() => setShortcutsOpen(false)}
-                  >
-                    Close
-                  </button>
-                </div>
-                <ul>
-                  <li>Left/Right arrows: move between words.</li>
-                  <li>Up/Down arrows: move to a nearby word.</li>
-                  <li>Option/Alt + arrows: move between sentences.</li>
-                  <li>Shift + arrows: select a word range.</li>
-                  <li>Shift + Option/Alt + arrows: select a sentence.</li>
-                  <li>Space or Enter: inspect a word or select a sentence.</li>
-                  <li>S: save the focused word, selected range, or selected sentence to Lexicon.</li>
-                  <li>?: show or hide this help.</li>
-                  <li>Escape: close help or the word panel.</li>
-                </ul>
-              </aside>
-            </Show>
-            <Show when={savingSelection() || savingWord()}>
-              <p class="reader-status" role="status">Saving selection…</p>
-            </Show>
-            <Show when={saveSelectionMessage()}>
-              <p class="reader-save-status" role="status">{saveSelectionMessage()}</p>
-            </Show>
-            <Show when={saveSelectionError()}>
-              <p class="reader-save-error" role="alert">{saveSelectionError()}</p>
-            </Show>
             <div
               class="reader-columns"
               onClick={(event) => {
@@ -1316,35 +1295,110 @@ export default function Reader() {
                     onActivate={onActivateToken}
                     onPointerDown={onPointerDownToken}
                     onArrowNavigate={onArrowNavigate}
-                    showPanel={panelColumn() === column && selectedToken() !== null}
+                    showPanel={
+                      panelColumn() === column &&
+                      (selectedToken() !== null ||
+                        shortcutsOpen() ||
+                        savingSelection() ||
+                        savingWord() ||
+                        saveSelectionMessage() !== null ||
+                        saveSelectionError() !== null)
+                    }
                     panel={
-                      selectedToken() ? (
-                        <WordDetailPanel
-                          token={selectedToken()!}
-                          lookup={lookup}
-                          loading={lookupLoading}
-                          error={lookupError}
-                          saving={savingWord}
-                          saveError={saveWordError}
-                          onClose={closePanel}
-                          onSaveWord={() => void saveWord()}
-                          annotationRange={annotationRange}
-                          annotationText={annotationText}
-                          category={annotationCategory}
-                          note={annotationNote}
-                          annotationSaving={annotationSaving}
-                          annotationError={annotationError}
-                          onCategoryChange={setAnnotationCategory}
-                          onNoteChange={setAnnotationNote}
-                          onSaveAnnotation={() => void saveAnnotation()}
-                          onCancelAnnotation={() => {
-                            setAnnotationStart(null);
-                            setAnnotationEnd(null);
-                            setAnnotationNote("");
-                            setAnnotationError(null);
-                          }}
-                        />
-                      ) : null
+                      <div id="reader-panel">
+                        <Show
+                          when={
+                            savingSelection() ||
+                            savingWord() ||
+                            saveSelectionMessage() !== null ||
+                            saveSelectionError() !== null
+                          }
+                        >
+                          <aside
+                            class={`reader-panel-notice${saveSelectionError() ? " reader-panel-notice--error" : ""}`}
+                            role={saveSelectionError() ? "alert" : "status"}
+                            aria-live={saveSelectionError() ? "assertive" : "polite"}
+                          >
+                            {savingSelection() || savingWord()
+                              ? "Saving to your Lexicon…"
+                              : saveSelectionError() ?? saveSelectionMessage()}
+                          </aside>
+                        </Show>
+                        <Show
+                          when={
+                            !savingSelection() &&
+                            !savingWord() &&
+                            !saveSelectionMessage() &&
+                            !saveSelectionError() &&
+                            shortcutsOpen()
+                          }
+                        >
+                          <aside
+                            class="reader-shortcuts"
+                            aria-label="Reader keyboard shortcuts"
+                          >
+                            <div class="reader-shortcuts__heading">
+                              <h3>Keyboard shortcuts</h3>
+                              <button
+                                class="secondary-button"
+                                type="button"
+                                onClick={() => setShortcutsOpen(false)}
+                              >
+                                Close
+                              </button>
+                            </div>
+                            <ul>
+                              <li>Left/Right arrows: move between words.</li>
+                              <li>Up/Down arrows: move to a nearby word.</li>
+                              <li>Option/Alt + arrows: move between sentences.</li>
+                              <li>Shift + arrows: select a word range.</li>
+                              <li>Shift + Option/Alt + arrows: select a sentence.</li>
+                              <li>Space or Enter: inspect a word or select a sentence.</li>
+                              <li>S: save the focused word, selected range, or selected sentence to Lexicon.</li>
+                              <li>?: show or hide this help.</li>
+                              <li>Escape: close help or the word panel.</li>
+                            </ul>
+                          </aside>
+                        </Show>
+                        <Show
+                          when={
+                            !savingSelection() &&
+                            !savingWord() &&
+                            !saveSelectionMessage() &&
+                            !saveSelectionError() &&
+                            !shortcutsOpen() &&
+                            selectedToken()
+                          }
+                        >
+                          {(token) => (
+                            <WordDetailPanel
+                              token={token()}
+                              lookup={lookup}
+                              loading={lookupLoading}
+                              error={lookupError}
+                              saving={savingWord}
+                              saveError={saveWordError}
+                              onClose={closePanel}
+                              onSaveWord={() => void saveWord()}
+                              annotationRange={annotationRange}
+                              annotationText={annotationText}
+                              category={annotationCategory}
+                              note={annotationNote}
+                              annotationSaving={annotationSaving}
+                              annotationError={annotationError}
+                              onCategoryChange={setAnnotationCategory}
+                              onNoteChange={setAnnotationNote}
+                              onSaveAnnotation={() => void saveAnnotation()}
+                              onCancelAnnotation={() => {
+                                setAnnotationStart(null);
+                                setAnnotationEnd(null);
+                                setAnnotationNote("");
+                                setAnnotationError(null);
+                              }}
+                            />
+                          )}
+                        </Show>
+                      </div>
                     }
                   />
                 )}

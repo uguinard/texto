@@ -1,5 +1,12 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import {
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  onMount,
+  Show,
+} from "solid-js";
 import type { JSX } from "solid-js";
 import "./App.css";
 
@@ -883,6 +890,12 @@ function App() {
       setPracticeLoading(false);
     }
   };
+
+  onMount(() => {
+    if (currentView() === "practice") {
+      void loadPracticeSession();
+    }
+  });
 
   const checkPracticeAnswer = async () => {
     const card = practiceCards()[practiceIndex()];
