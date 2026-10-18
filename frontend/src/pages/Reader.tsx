@@ -62,6 +62,21 @@ type HoveredToken = {
   y: number;
 };
 
+type WordSelection = {
+  anchorTokenId: number;
+  focusTokenId: number;
+};
+
+type PointerSelection = {
+  pointerId: number;
+  anchorTokenId: number;
+  hasDragged: boolean;
+};
+
+function isWordToken(token: ReaderToken): boolean {
+  return /[\p{L}\p{N}]/u.test(token.surface);
+}
+
 function isCategory(value: unknown): value is AnnotationCategory {
   return (
     value === "lexical" ||
@@ -400,7 +415,13 @@ export default function Reader() {
   const navigate = useNavigate();
   let columnsElement: HTMLDivElement | undefined;
   let layoutObserver: ResizeObserver | undefined;
+  let suppressTokenClickUntil = 0;
   const [selectedToken, setSelectedToken] = createSignal<SelectedToken | null>(null);
+  const [wordSelection, setWordSelection] = createSignal<WordSelection | null>(null);
+  const [pointerSelection, setPointerSelection] =
+    createSignal<PointerSelection | null>(null);
+  const [activeSentenceId, setActiveSentenceId] = createSignal<number | null>(null);
+  const [selectedSentenceId, setSelectedSentenceId] = createSignal<number | null>(null);
   const [pageIndex, setPageIndex] = createSignal(0);
   const [layout, setLayout] = createSignal<ReaderLayout>({
     columnWidth: 300,
@@ -413,6 +434,12 @@ export default function Reader() {
   const [lookupError, setLookupError] = createSignal<string | null>(null);
   const [savingWord, setSavingWord] = createSignal(false);
   const [saveWordError, setSaveWordError] = createSignal<string | null>(null);
+  const [savingSelection, setSavingSelection] = createSignal(false);
+  const [saveSelectionMessage, setSaveSelectionMessage] =
+    createSignal<string | null>(null);
+  const [saveSelectionError, setSaveSelectionError] =
+    createSignal<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
   const [wordStates, setWordStates] = createSignal<Record<number, ReaderToken["state"]>>({});
   const [annotationStart, setAnnotationStart] = createSignal<ReaderToken | null>(null);
   const [annotationEnd, setAnnotationEnd] = createSignal<ReaderToken | null>(null);
@@ -487,6 +514,12 @@ export default function Reader() {
   const pages = createMemo(() =>
     buildPages(text()?.sentences ?? [], layout()),
   );
+  const orderedTokens = createMemo(
+    () => text()?.sentences.flatMap((sentence) => sentence.tokens) ?? [],
+  );
+  const orderedWords = createMemo(() =>
+    orderedTokens().filter(isWordToken),
+  );
   const columns = createMemo(() => {
     const currentText = text();
     if (!currentText) {
@@ -547,15 +580,45 @@ export default function Reader() {
   });
   const panelColumn = createMemo(() => {
     const column = selectedToken()?.column;
-    if (column === 1 || column === 2) {
-      return 3;
+    if (column === 1 || column === 3) {
+      return 2;
     }
-    return column === 3 ? 1 : null;
+    return column === 2 ? 3 : null;
   });
   const annotationRange = createMemo(() => {
     const start = annotationStart();
     const end = annotationEnd();
     return start && end ? { start, end } : null;
+  });
+  const selectionEndpoints = createMemo(() => {
+    const range =
+      wordSelection() ??
+      (() => {
+        const annotation = annotationRange();
+        return annotation
+          ? {
+              anchorTokenId: annotation.start.id,
+              focusTokenId: annotation.end.id,
+            }
+          : null;
+      })();
+    if (!range) {
+      return { start: null, end: null };
+    }
+    const allTokens = orderedTokens();
+    const anchorIndex = allTokens.findIndex(
+      (token) => token.id === range.anchorTokenId,
+    );
+    const focusIndex = allTokens.findIndex(
+      (token) => token.id === range.focusTokenId,
+    );
+    if (anchorIndex < 0 || focusIndex < 0) {
+      return { start: null, end: null };
+    }
+    return {
+      start: allTokens[Math.min(anchorIndex, focusIndex)].id,
+      end: allTokens[Math.max(anchorIndex, focusIndex)].id,
+    };
   });
   const annotationText = createMemo(() => {
     const range = annotationRange();
@@ -576,20 +639,211 @@ export default function Reader() {
     setAnnotationError(null);
   };
 
+  const saveLearningSelection = async () => {
+    const currentText = text();
+    if (!currentText || savingSelection()) {
+      return;
+    }
+    setSaveSelectionMessage(null);
+    setSaveSelectionError(null);
+
+    let firstToken: ReaderToken | undefined;
+    let lastToken: ReaderToken | undefined;
+    const sentenceId = selectedSentenceId();
+    if (sentenceId !== null) {
+      const sentence = currentText.sentences.find((item) => item.id === sentenceId);
+      if (!sentence || sentence.tokens.length === 0) {
+        setSaveSelectionError("The selected sentence is no longer available.");
+        return;
+      }
+      firstToken = sentence.tokens[0];
+      lastToken = sentence.tokens[sentence.tokens.length - 1];
+    } else if (wordSelection() !== null) {
+      const endpoints = selectionEndpoints();
+      const tokens = orderedTokens();
+      firstToken = tokens.find((token) => token.id === endpoints.start);
+      lastToken = tokens.find((token) => token.id === endpoints.end);
+      if (!firstToken || !lastToken) {
+        setSaveSelectionError("Select a word or a word range before saving.");
+        return;
+      }
+      if (firstToken.sentence_id !== lastToken.sentence_id) {
+        setSaveSelectionError("A saved chunk must be contained in one sentence.");
+        return;
+      }
+    } else {
+      const focusedElement =
+        document.activeElement instanceof Element
+          ? document.activeElement.closest<HTMLElement>(
+              ".reader-token[data-token-id]",
+            )
+          : null;
+      const tokenId = focusedElement?.dataset.tokenId;
+      const focusedToken = tokenId
+        ? orderedTokens().find((token) => token.id === Number(tokenId))
+        : selectedToken();
+      if (!focusedToken || !isWordToken(focusedToken)) {
+        setSaveSelectionError("Focus a word or select a word range before saving.");
+        return;
+      }
+      const saved = await saveWord(focusedToken);
+      if (saved) {
+        setSaveSelectionMessage(`Saved “${focusedToken.surface}” to your Lexicon.`);
+      } else {
+        setSaveSelectionError(
+          saveWordError() ?? "Unable to save the focused word.",
+        );
+      }
+      return;
+    }
+
+    if (
+      !firstToken ||
+      !lastToken ||
+      firstToken.sentence_id !== lastToken.sentence_id
+    ) {
+      setSaveSelectionError("A saved chunk must be contained in one sentence.");
+      return;
+    }
+
+    setSavingSelection(true);
+    try {
+      const response = await fetch("/api/lexicon/chunks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text_id: currentText.text_id,
+          sentence_id: firstToken.sentence_id,
+          start_token_id: firstToken.id,
+          end_token_id: lastToken.id,
+          note: null,
+        }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(errorDetail(body) ?? "Unable to save this chunk.");
+      }
+      if (
+        typeof body !== "object" ||
+        body === null ||
+        !("phrase" in body) ||
+        typeof body.phrase !== "string"
+      ) {
+        throw new Error("The backend returned an unexpected saved-chunk response.");
+      }
+      setSaveSelectionMessage(`Saved “${body.phrase}” to your Lexicon.`);
+    } catch (requestError) {
+      setSaveSelectionError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to save this chunk.",
+      );
+    } finally {
+      setSavingSelection(false);
+    }
+  };
+
+  const onPointerDownToken = (
+    token: ReaderToken,
+    pointerId: number,
+    shiftKey: boolean,
+  ) => {
+    if (shiftKey) {
+      return;
+    }
+    suppressTokenClickUntil = 0;
+    setPointerSelection({
+      pointerId,
+      anchorTokenId: token.id,
+      hasDragged: false,
+    });
+  };
+
   onMount(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
+    const handleKeyboardShortcuts = (event: KeyboardEvent) => {
+      const target = event.target;
+      const isEditable =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.matches("input, textarea, select"));
       if (event.key === "Escape") {
-        closePanel();
+        if (shortcutsOpen()) {
+          setShortcutsOpen(false);
+        } else {
+          closePanel();
+        }
+        return;
+      }
+      if (
+        isEditable ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      if (event.key === "?") {
+        event.preventDefault();
+        setShortcutsOpen((open) => !open);
+      } else if (event.key.toLocaleLowerCase() === "s") {
+        event.preventDefault();
+        void saveLearningSelection();
       }
     };
-    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", handleKeyboardShortcuts);
     const handleResize = () => {
       window.requestAnimationFrame(measureReaderLayout);
     };
+    const handlePointerMove = (event: PointerEvent) => {
+      const selection = pointerSelection();
+      if (!selection || event.pointerId !== selection.pointerId) {
+        return;
+      }
+      const target = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLSpanElement>(".reader-token[tabindex='0'][data-token-id]");
+      if (!target || !columnsElement?.contains(target)) {
+        return;
+      }
+      const targetTokenId = Number(target.dataset.tokenId);
+      if (!orderedWords().some((word) => word.id === targetTokenId)) {
+        return;
+      }
+      if (targetTokenId !== selection.anchorTokenId) {
+        setPointerSelection({ ...selection, hasDragged: true });
+        setActiveSentenceId(null);
+        setSelectedSentenceId(null);
+        setWordSelection({
+          anchorTokenId: selection.anchorTokenId,
+          focusTokenId: targetTokenId,
+        });
+      } else if (selection.hasDragged) {
+        setWordSelection({
+          anchorTokenId: selection.anchorTokenId,
+          focusTokenId: selection.anchorTokenId,
+        });
+      }
+    };
+    const handlePointerUp = (event: PointerEvent) => {
+      const selection = pointerSelection();
+      if (!selection || event.pointerId !== selection.pointerId) {
+        return;
+      }
+      if (selection.hasDragged) {
+        suppressTokenClickUntil = Date.now() + 500;
+      }
+      setPointerSelection(null);
+    };
     window.addEventListener("resize", handleResize);
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
     onCleanup(() => {
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("keydown", handleKeyboardShortcuts);
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
       layoutObserver?.disconnect();
     });
   });
@@ -601,17 +855,138 @@ export default function Reader() {
     y: number,
   ) => setHoveredToken({ token, x, y });
 
+  const onArrowNavigate = (
+    token: ReaderToken,
+    key: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight",
+    current: HTMLSpanElement,
+    shiftKey: boolean,
+    altKey: boolean,
+  ) => {
+    const tokens = Array.from(
+      columnsElement?.querySelectorAll<HTMLSpanElement>(
+        ".reader-token[data-token-id]",
+      ) ?? [],
+    );
+    let nextTokenId: number | undefined;
+
+    if (altKey) {
+      const sentenceList = text()?.sentences ?? [];
+      const currentSentenceIndex = sentenceList.findIndex(
+        (sentence) => sentence.id === token.sentence_id,
+      );
+      const direction =
+        key === "ArrowLeft" || key === "ArrowUp" ? -1 : 1;
+      const targetSentence = sentenceList[currentSentenceIndex + direction];
+      nextTokenId = targetSentence?.tokens.find(isWordToken)?.id;
+      if (shiftKey && targetSentence) {
+        setActiveSentenceId(null);
+        setSelectedSentenceId(targetSentence.id);
+        setWordSelection(null);
+      } else {
+        setActiveSentenceId(targetSentence?.id ?? null);
+        setSelectedSentenceId(null);
+      }
+    } else if (key === "ArrowLeft" || key === "ArrowRight") {
+      setActiveSentenceId(null);
+      setSelectedSentenceId(null);
+      const allWords = orderedWords();
+      const currentIndex = allWords.findIndex((item) => item.id === token.id);
+      nextTokenId = allWords[currentIndex + (key === "ArrowRight" ? 1 : -1)]?.id;
+    } else {
+      setActiveSentenceId(null);
+      setSelectedSentenceId(null);
+      const currentRect = current.getBoundingClientRect();
+      const currentX = currentRect.left + currentRect.width / 2;
+      const currentY = currentRect.top + currentRect.height / 2;
+      const neighbor = tokens
+        .filter(
+          (element) =>
+            element !== current &&
+            /[\p{L}\p{N}]/u.test(element.textContent ?? ""),
+        )
+        .map((element) => {
+          const rect = element.getBoundingClientRect();
+          const deltaX = rect.left + rect.width / 2 - currentX;
+          const deltaY = rect.top + rect.height / 2 - currentY;
+          const isForward =
+            key === "ArrowDown" ? deltaY > 1 : deltaY < -1;
+          return isForward
+            ? {
+                element,
+                score: Math.abs(deltaY) + Math.abs(deltaX) * 2,
+              }
+            : null;
+        })
+        .filter(
+          (item): item is { element: HTMLSpanElement; score: number } =>
+            item !== null,
+        )
+        .sort((left, right) => left.score - right.score)[0]?.element;
+      const neighborId = neighbor?.dataset.tokenId;
+      nextTokenId = neighborId === undefined ? undefined : Number(neighborId);
+    }
+
+    if (nextTokenId === undefined) {
+      return;
+    }
+    const targetTokenId = nextTokenId;
+    if (shiftKey && !altKey) {
+      setWordSelection((selection) => ({
+        anchorTokenId: selection?.anchorTokenId ?? token.id,
+        focusTokenId: targetTokenId,
+      }));
+    } else {
+      setWordSelection(null);
+    }
+
+    const targetPageIndex = pages().findIndex((page) =>
+      page.some((column) =>
+        column.some((paragraph) =>
+          paragraph.sentences.some((sentence) =>
+            sentence.tokens.some((item) => item.token.id === targetTokenId),
+          ),
+        ),
+      ),
+    );
+    if (targetPageIndex < 0) {
+      return;
+    }
+    if (targetPageIndex !== pageIndex()) {
+      setPageIndex(targetPageIndex);
+      window.requestAnimationFrame(() => {
+        columnsElement
+          ?.querySelector<HTMLSpanElement>(
+            `.reader-token[data-token-id="${targetTokenId}"]`,
+          )
+          ?.focus();
+      });
+    } else {
+      columnsElement
+        ?.querySelector<HTMLSpanElement>(
+          `.reader-token[data-token-id="${targetTokenId}"]`,
+        )
+        ?.focus();
+    }
+  };
+
   const onClickToken = async (
     token: ReaderToken,
     column: 1 | 2 | 3,
     shiftKey: boolean,
   ) => {
+    if (Date.now() < suppressTokenClickUntil) {
+      suppressTokenClickUntil = 0;
+      return;
+    }
+    setActiveSentenceId(null);
+    setSelectedSentenceId(null);
     if (shiftKey && annotationStart()) {
       const start = annotationStart();
       if (start?.sentence_id !== token.sentence_id) {
         setAnnotationError("Select the end of a highlight in the same sentence.");
         return;
       }
+      setWordSelection(null);
       setAnnotationEnd(token);
       setAnnotationError(null);
       return;
@@ -661,12 +1036,30 @@ export default function Reader() {
     }
   };
 
-  const saveWord = async () => {
-    const token = selectedToken();
-    const currentText = text();
-    if (!token || !currentText || savingWord()) {
+  const onActivateToken = (token: ReaderToken, column: 1 | 2 | 3) => {
+    if (
+      activeSentenceId() === token.sentence_id ||
+      selectedSentenceId() === token.sentence_id
+    ) {
+      setWordSelection(null);
+      setActiveSentenceId(null);
+      setSelectedSentenceId((current) =>
+        current === token.sentence_id ? null : token.sentence_id,
+      );
       return;
     }
+    setSelectedSentenceId(null);
+    void onClickToken(token, column, false);
+  };
+
+  const saveWord = async (
+    token: ReaderToken | null = selectedToken(),
+  ): Promise<boolean> => {
+    const currentText = text();
+    if (!token || !currentText || savingWord()) {
+      return false;
+    }
+    const tokenLookup = selectedToken()?.id === token.id ? lookup() : null;
     setSavingWord(true);
     setSaveWordError(null);
     try {
@@ -676,8 +1069,8 @@ export default function Reader() {
         body: JSON.stringify({
           text_id: currentText.text_id,
           token_id: token.id,
-          lemma: lookup()?.lemma ?? token.lemma,
-          translation: lookup()?.translation ?? token.translation,
+          lemma: tokenLookup?.lemma ?? token.lemma,
+          translation: tokenLookup?.translation ?? token.translation,
         }),
       });
       const body: unknown = await response.json();
@@ -696,17 +1089,20 @@ export default function Reader() {
         throw new Error("The backend returned an unexpected saved word.");
       }
       const forms = new Set(
-        [token.surface, lookup()?.lemma ?? token.lemma]
+        [token.surface, tokenLookup?.lemma ?? token.lemma]
           .filter((value): value is string => value !== null)
           .map((value) => value.toLocaleLowerCase()),
       );
       const updates: Record<number, ReaderToken["state"]> = {};
+      const normalizedForms = new Set(
+        [...forms].map((form) => form.toLocaleLowerCase()),
+      );
       for (const sentence of currentText.sentences) {
         for (const word of sentence.tokens) {
-          if (
-            word.sentence_id === token.sentence_id &&
-            forms.has((word.lemma ?? word.surface).toLocaleLowerCase())
-          ) {
+          const wordForms = [word.surface, word.lemma]
+            .filter((form): form is string => form !== null)
+            .map((form) => form.toLocaleLowerCase());
+          if (wordForms.some((form) => normalizedForms.has(form))) {
             updates[word.id] = savedState;
           }
         }
@@ -716,12 +1112,14 @@ export default function Reader() {
       setSelectedToken((current) =>
         current?.id === token.id ? { ...current, state: savedState } : current,
       );
+      return true;
     } catch (requestError) {
       setSaveWordError(
         requestError instanceof Error
           ? requestError.message
           : "Unable to save this word.",
       );
+      return false;
     } finally {
       setSavingWord(false);
     }
@@ -805,13 +1203,72 @@ export default function Reader() {
               <button
                 class="secondary-button"
                 type="button"
+                aria-expanded={shortcutsOpen()}
+                aria-controls="reader-shortcuts"
+                onClick={() => setShortcutsOpen((open) => !open)}
+              >
+                Keyboard help
+              </button>
+              <button
+                class="secondary-button"
+                type="button"
                 onClick={() => void navigate("/library")}
               >
                 Back to Library
               </button>
             </div>
+            <Show when={shortcutsOpen()}>
+              <aside
+                id="reader-shortcuts"
+                class="reader-shortcuts"
+                aria-label="Reader keyboard shortcuts"
+              >
+                <div class="reader-shortcuts__heading">
+                  <h3>Keyboard shortcuts</h3>
+                  <button
+                    class="secondary-button"
+                    type="button"
+                    onClick={() => setShortcutsOpen(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <ul>
+                  <li>Left/Right arrows: move between words.</li>
+                  <li>Up/Down arrows: move to a nearby word.</li>
+                  <li>Option/Alt + arrows: move between sentences.</li>
+                  <li>Shift + arrows: select a word range.</li>
+                  <li>Shift + Option/Alt + arrows: select a sentence.</li>
+                  <li>Space or Enter: inspect a word or select a sentence.</li>
+                  <li>S: save the focused word, selected range, or selected sentence to Lexicon.</li>
+                  <li>?: show or hide this help.</li>
+                  <li>Escape: close help or the word panel.</li>
+                </ul>
+              </aside>
+            </Show>
+            <Show when={savingSelection() || savingWord()}>
+              <p class="reader-status" role="status">Saving selection…</p>
+            </Show>
+            <Show when={saveSelectionMessage()}>
+              <p class="reader-save-status" role="status">{saveSelectionMessage()}</p>
+            </Show>
+            <Show when={saveSelectionError()}>
+              <p class="reader-save-error" role="alert">{saveSelectionError()}</p>
+            </Show>
             <div
               class="reader-columns"
+              onClick={(event) => {
+                const target = event.target;
+                if (
+                  target instanceof Element &&
+                  target.closest(
+                    ".reader-token, .reader-column__overlay, button, input, textarea, select, a",
+                  )
+                ) {
+                  return;
+                }
+                closePanel();
+              }}
               ref={(element) => {
                 columnsElement = element;
                 layoutObserver = new ResizeObserver(measureReaderLayout);
@@ -824,25 +1281,41 @@ export default function Reader() {
                   <ReaderColumn
                     column={column}
                     paragraphs={columns()[column - 1]}
+                    activeSentenceId={activeSentenceId()}
+                    selectedSentenceId={selectedSentenceId()}
                     selectedTokenId={selectedToken()?.id ?? null}
+                    rangeStartTokenId={selectionEndpoints().start}
+                    rangeEndTokenId={selectionEndpoints().end}
                     selectedRange={(token) => {
-                      const range = annotationRange();
-                      if (!range || token.sentence_id !== range.start.sentence_id) {
+                      const endpoints = selectionEndpoints();
+                      if (!endpoints.start || !endpoints.end) {
                         return false;
                       }
-                      const low = Math.min(
-                        range.start.order_index,
-                        range.end.order_index,
+                      const allTokens = orderedTokens();
+                      const startIndex = allTokens.findIndex(
+                        (item) => item.id === endpoints.start,
                       );
-                      const high = Math.max(
-                        range.start.order_index,
-                        range.end.order_index,
+                      const endIndex = allTokens.findIndex(
+                        (item) => item.id === endpoints.end,
                       );
-                      return token.order_index >= low && token.order_index <= high;
+                      const tokenIndex = allTokens.findIndex(
+                        (item) => item.id === token.id,
+                      );
+                      return (
+                        startIndex >= 0 &&
+                        endIndex >= 0 &&
+                        tokenIndex >= startIndex &&
+                        tokenIndex <= endIndex &&
+                        (wordSelection() !== null ||
+                          token.sentence_id === annotationRange()?.start.sentence_id)
+                      );
                     }}
                     onHover={onHover}
                     onLeave={() => setHoveredToken(null)}
                     onClick={onClickToken}
+                    onActivate={onActivateToken}
+                    onPointerDown={onPointerDownToken}
+                    onArrowNavigate={onArrowNavigate}
                     showPanel={panelColumn() === column && selectedToken() !== null}
                     panel={
                       selectedToken() ? (

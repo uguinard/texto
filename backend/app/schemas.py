@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 AnnotationCategory = Literal[
@@ -140,7 +140,9 @@ class LexiconStateUpdate(BaseModel):
 
 class PracticeCardResponse(BaseModel):
     id: int
-    vocab_item_id: int
+    item_type: Literal["word", "chunk"] = "word"
+    vocab_item_id: int | None = None
+    saved_chunk_id: int | None = None
     card_type: Literal["cloze"]
     sentence: str
     answer: str
@@ -149,15 +151,66 @@ class PracticeCardResponse(BaseModel):
 
 class PracticeReviewRequest(BaseModel):
     card_id: int = Field(gt=0)
-    vocab_item_id: int = Field(gt=0)
+    vocab_item_id: int | None = Field(default=None, gt=0)
+    saved_chunk_id: int | None = Field(default=None, gt=0)
     correct: bool
     answer_given: str
+
+    @model_validator(mode="after")
+    def require_one_learning_item(self) -> "PracticeReviewRequest":
+        if (self.vocab_item_id is None) == (self.saved_chunk_id is None):
+            raise ValueError("Specify exactly one vocabulary item or saved chunk.")
+        return self
 
 
 class PracticeReviewResponse(BaseModel):
     card_id: int
-    vocab_item_id: int
+    vocab_item_id: int | None = None
+    saved_chunk_id: int | None = None
     mastery: float
+
+
+class SavedChunkCreateRequest(BaseModel):
+    text_id: int = Field(gt=0)
+    sentence_id: int = Field(gt=0)
+    start_token_id: int = Field(gt=0)
+    end_token_id: int = Field(gt=0)
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class SavedChunkUpdateRequest(BaseModel):
+    state: Literal["new", "learning", "known"] | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class SavedChunkResponse(BaseModel):
+    id: int
+    text_id: int
+    text_title: str
+    language: str
+    sentence_id: int
+    start_token_id: int
+    end_token_id: int
+    phrase: str
+    source_sentence: str
+    note: str | None
+    state: Literal["new", "learning", "known"]
+    created_at: datetime
+    next_review: datetime | None
 
 
 class LookupRequest(BaseModel):

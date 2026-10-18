@@ -1,5 +1,5 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import "./App.css";
 
@@ -65,9 +65,27 @@ type LexiconItem = {
   next_review: string | null;
 };
 
+type SavedChunk = {
+  id: number;
+  text_id: number;
+  text_title: string;
+  language: string;
+  sentence_id: number;
+  start_token_id: number;
+  end_token_id: number;
+  phrase: string;
+  source_sentence: string;
+  note: string | null;
+  state: LexiconState;
+  created_at: string;
+  next_review: string | null;
+};
+
 type PracticeCard = {
   id: number;
-  vocab_item_id: number;
+  item_type: "word" | "chunk";
+  vocab_item_id: number | null;
+  saved_chunk_id: number | null;
   card_type: "cloze";
   sentence: string;
   answer: string;
@@ -76,7 +94,8 @@ type PracticeCard = {
 
 type PracticeReview = {
   card_id: number;
-  vocab_item_id: number;
+  vocab_item_id: number | null;
+  saved_chunk_id: number | null;
   mastery: number;
 };
 
@@ -308,8 +327,46 @@ function isLexiconList(value: unknown): value is LexiconItem[] {
   return Array.isArray(value) && value.every(isLexiconItem);
 }
 
-function isLexiconState(value: string): value is LexiconState {
+function isLexiconState(value: unknown): value is LexiconState {
   return value === "new" || value === "learning" || value === "known";
+}
+
+function isSavedChunk(value: unknown): value is SavedChunk {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  return (
+    "id" in value &&
+    typeof value.id === "number" &&
+    "text_id" in value &&
+    typeof value.text_id === "number" &&
+    "text_title" in value &&
+    typeof value.text_title === "string" &&
+    "language" in value &&
+    typeof value.language === "string" &&
+    "sentence_id" in value &&
+    typeof value.sentence_id === "number" &&
+    "start_token_id" in value &&
+    typeof value.start_token_id === "number" &&
+    "end_token_id" in value &&
+    typeof value.end_token_id === "number" &&
+    "phrase" in value &&
+    typeof value.phrase === "string" &&
+    "source_sentence" in value &&
+    typeof value.source_sentence === "string" &&
+    "note" in value &&
+    (typeof value.note === "string" || value.note === null) &&
+    "state" in value &&
+    isLexiconState(value.state) &&
+    "created_at" in value &&
+    typeof value.created_at === "string" &&
+    "next_review" in value &&
+    (typeof value.next_review === "string" || value.next_review === null)
+  );
+}
+
+function isSavedChunkList(value: unknown): value is SavedChunk[] {
+  return Array.isArray(value) && value.every(isSavedChunk);
 }
 
 function formatNextReview(nextReview: string | null): string {
@@ -327,7 +384,13 @@ function isPracticeCard(value: unknown): value is PracticeCard {
     "id" in value &&
     typeof value.id === "number" &&
     "vocab_item_id" in value &&
-    typeof value.vocab_item_id === "number" &&
+    (typeof value.vocab_item_id === "number" || value.vocab_item_id === null) &&
+    "saved_chunk_id" in value &&
+    (typeof value.saved_chunk_id === "number" || value.saved_chunk_id === null) &&
+    "item_type" in value &&
+    (value.item_type === "word" || value.item_type === "chunk") &&
+    ((value.item_type === "word" && typeof value.vocab_item_id === "number") ||
+      (value.item_type === "chunk" && typeof value.saved_chunk_id === "number")) &&
     "card_type" in value &&
     value.card_type === "cloze" &&
     "sentence" in value &&
@@ -351,7 +414,11 @@ function isPracticeReview(value: unknown): value is PracticeReview {
     "card_id" in value &&
     typeof value.card_id === "number" &&
     "vocab_item_id" in value &&
-    typeof value.vocab_item_id === "number" &&
+    (typeof value.vocab_item_id === "number" || value.vocab_item_id === null) &&
+    "saved_chunk_id" in value &&
+    (typeof value.saved_chunk_id === "number" || value.saved_chunk_id === null) &&
+    ((typeof value.vocab_item_id === "number" && value.saved_chunk_id === null) ||
+      (typeof value.saved_chunk_id === "number" && value.vocab_item_id === null)) &&
     "mastery" in value &&
     typeof value.mastery === "number"
   );
@@ -479,6 +546,20 @@ function App() {
       return body;
     },
   );
+  const [savedChunks, { refetch: refreshSavedChunks }] = createResource(
+    () => currentView() === "lexicon" ? true : undefined,
+    async (_enabled): Promise<SavedChunk[]> => {
+      const response = await fetch("/api/lexicon/chunks");
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(getErrorMessage(body) ?? "Unable to load saved chunks.");
+      }
+      if (!isSavedChunkList(body)) {
+        throw new Error("The backend returned an unexpected saved-chunk response.");
+      }
+      return body;
+    },
+  );
   const [title, setTitle] = createSignal("");
   const [language, setLanguage] = createSignal("");
   const [rawText, setRawText] = createSignal("");
@@ -504,6 +585,20 @@ function App() {
   const [readerError, setReaderError] = createSignal<string | null>(null);
   const [readerRequestId, setReaderRequestId] = createSignal(0);
   const [lexiconActionError, setLexiconActionError] = createSignal<string | null>(null);
+  const [savedChunkNotes, setSavedChunkNotes] = createSignal<Record<number, string>>({});
+  const visibleSavedChunks = createMemo(() => {
+    const search = lexiconSearch().trim().toLocaleLowerCase();
+    return (savedChunks() ?? []).filter((chunk) => {
+      const matchesState =
+        lexiconFilter() === "all" || chunk.state === lexiconFilter();
+      const matchesSearch =
+        !search ||
+        `${chunk.phrase} ${chunk.source_sentence} ${chunk.text_title}`
+          .toLocaleLowerCase()
+          .includes(search);
+      return matchesState && matchesSearch;
+    });
+  });
   const [practiceCards, setPracticeCards] = createSignal<PracticeCard[]>([]);
   const [practiceLoading, setPracticeLoading] = createSignal(false);
   const [practiceError, setPracticeError] = createSignal<string | null>(null);
@@ -600,6 +695,59 @@ function App() {
         requestError instanceof Error
           ? requestError.message
           : "Unable to delete this word.",
+      );
+    }
+  };
+
+  const updateSavedChunk = async (
+    chunk: SavedChunk,
+    update: { state?: LexiconState; note?: string },
+  ) => {
+    try {
+      const response = await fetch(`/api/lexicon/chunks/${chunk.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...update,
+          ...(update.note !== undefined ? { note: update.note.trim() || null } : {}),
+        }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(getErrorMessage(body) ?? "Unable to update this chunk.");
+      }
+      if (!isSavedChunk(body)) {
+        throw new Error("The backend returned an unexpected saved chunk.");
+      }
+      setSavedChunkNotes((current) => {
+        const { [chunk.id]: _removed, ...remaining } = current;
+        return remaining;
+      });
+      await refreshSavedChunks();
+    } catch (requestError) {
+      setLexiconActionError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to update this chunk.",
+      );
+    }
+  };
+
+  const deleteSavedChunk = async (chunk: SavedChunk) => {
+    try {
+      const response = await fetch(`/api/lexicon/chunks/${chunk.id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const body: unknown = await response.json();
+        throw new Error(getErrorMessage(body) ?? "Unable to delete this chunk.");
+      }
+      await refreshSavedChunks();
+    } catch (requestError) {
+      setLexiconActionError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to delete this chunk.",
       );
     }
   };
@@ -753,7 +901,9 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           card_id: card.id,
-          vocab_item_id: card.vocab_item_id,
+          ...(card.item_type === "word"
+            ? { vocab_item_id: card.vocab_item_id }
+            : { saved_chunk_id: card.saved_chunk_id }),
           correct,
           answer_given: answerGiven,
         }),
@@ -1335,7 +1485,7 @@ function App() {
           <section style={styles.section} aria-label="Lexicon">
             <h2 style={styles.sectionTitle}>Lexicon</h2>
             <p style={styles.description}>
-              Saved words and their exposure in your imported texts.
+              Saved words and multi-word chunks from your imported texts.
             </p>
 
             <div style={styles.lexiconFilters} aria-label="Filter lexicon by state">
@@ -1374,7 +1524,7 @@ function App() {
             </div>
 
             <label style={styles.label} for="lexicon-search">
-              Search words
+              Search Lexicon
             </label>
             <input
               id="lexicon-search"
@@ -1382,7 +1532,7 @@ function App() {
               type="search"
               value={lexiconSearch()}
               onInput={(event) => setLexiconSearch(event.currentTarget.value)}
-              placeholder="Search lemma..."
+              placeholder="Search words and chunks..."
             />
 
             <Show when={lexiconItems.loading}>
@@ -1485,6 +1635,111 @@ function App() {
                 </div>
               </Show>
             </Show>
+            <section style={styles.savedChunksSection} aria-label="Saved chunks">
+              <h3 style={styles.sectionTitle}>Saved chunks</h3>
+              <p style={styles.description}>
+                Multi-word expressions keep their original sentence and can be reviewed in cloze practice.
+              </p>
+              <Show when={savedChunks.loading}>
+                <p style={styles.description}>Loading saved chunks…</p>
+              </Show>
+              <Show when={savedChunks.error}>
+                <p style={styles.error} role="alert">
+                  {savedChunks.error instanceof Error
+                    ? savedChunks.error.message
+                    : "Unable to load saved chunks."}
+                </p>
+              </Show>
+              <Show when={!savedChunks.loading && !savedChunks.error}>
+                <Show
+                  when={visibleSavedChunks().length > 0}
+                  fallback={<p style={styles.description}>No matching saved chunks.</p>}
+                >
+                  <ul style={styles.savedChunkList}>
+                    <For each={visibleSavedChunks()}>
+                      {(chunk) => (
+                        <li style={styles.savedChunkItem}>
+                          <div>
+                            <strong>{chunk.phrase}</strong>
+                            <p style={styles.surfaceExample}>
+                              {chunk.source_sentence}
+                            </p>
+                            <p style={styles.surfaceExample}>
+                              {chunk.text_title} · {chunk.language} ·{" "}
+                              {chunk.state === "known"
+                                ? "Known"
+                                : formatNextReview(chunk.next_review)}
+                            </p>
+                          </div>
+                          <label style={styles.label} for={`chunk-note-${chunk.id}`}>
+                            Note (optional)
+                          </label>
+                          <textarea
+                            id={`chunk-note-${chunk.id}`}
+                            style={styles.textarea}
+                            rows="2"
+                            maxLength={2000}
+                            value={savedChunkNotes()[chunk.id] ?? chunk.note ?? ""}
+                            onInput={(event) =>
+                              setSavedChunkNotes((current) => ({
+                                ...current,
+                                [chunk.id]: event.currentTarget.value,
+                              }))
+                            }
+                          />
+                          <div style={styles.annotationActions}>
+                            <button
+                              style={styles.deleteButton}
+                              type="button"
+                              onClick={() => {
+                                setLexiconActionError(null);
+                                void updateSavedChunk(chunk, {
+                                  note: savedChunkNotes()[chunk.id] ?? chunk.note ?? "",
+                                });
+                              }}
+                            >
+                              Save note
+                            </button>
+                            <label
+                              style={styles.visuallyHidden}
+                              for={`chunk-state-${chunk.id}`}
+                            >
+                              State for {chunk.phrase}
+                            </label>
+                            <select
+                              id={`chunk-state-${chunk.id}`}
+                              style={styles.stateSelect}
+                              value={chunk.state}
+                              onChange={(event) => {
+                                const state = event.currentTarget.value;
+                                if (isLexiconState(state)) {
+                                  setLexiconActionError(null);
+                                  void updateSavedChunk(chunk, { state });
+                                }
+                              }}
+                            >
+                              <option value="new">New</option>
+                              <option value="learning">Learning</option>
+                              <option value="known">Known</option>
+                            </select>
+                            <button
+                              style={styles.deleteButton}
+                              type="button"
+                              onClick={() => {
+                                setLexiconActionError(null);
+                                void deleteSavedChunk(chunk);
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </Show>
+              </Show>
+            </section>
           </section>
         </Show>
 
@@ -1492,7 +1747,7 @@ function App() {
           <section style={styles.section} aria-label="Practice">
             <h2 style={styles.sectionTitle}>Cloze practice</h2>
             <p style={styles.description}>
-              Recall a saved word in the sentence where you encountered it.
+            Recall a saved word or chunk in the sentence where you encountered it.
             </p>
 
             <Show when={practiceLoading()}>
@@ -1506,7 +1761,7 @@ function App() {
                 when={practiceCards().length > 0}
                 fallback={
                   <p style={styles.description}>
-                    No learning words with sentence context yet. Save a word from the Reader to practice it here.
+                    No learning words or chunks with sentence context yet. Save one from the Reader to practice it here.
                   </p>
                 }
               >
@@ -1535,7 +1790,10 @@ function App() {
                 >
                   <div style={styles.practiceCard}>
                     <p style={styles.practiceProgress}>
-                      Card {practiceIndex() + 1} of {practiceCards().length}
+                      {practiceCards()[practiceIndex()]?.item_type === "chunk"
+                        ? "Chunk"
+                        : "Word"}{" "}
+                      · Card {practiceIndex() + 1} of {practiceCards().length}
                     </p>
                     <p style={styles.clozeSentence}>
                       {practiceCards()[practiceIndex()]?.sentence}
@@ -1811,6 +2069,26 @@ const styles: Record<string, JSX.CSSProperties> = {
     width: "100%",
     "border-collapse": "collapse",
     "text-align": "left",
+  },
+  savedChunksSection: {
+    "margin-top": "2rem",
+    "padding-top": "1rem",
+    "border-top": "1px solid #e2e8f0",
+  },
+  savedChunkList: {
+    margin: 0,
+    padding: 0,
+    "list-style": "none",
+    display: "grid",
+    gap: "1rem",
+  },
+  savedChunkItem: {
+    display: "grid",
+    gap: "0.5rem",
+    padding: "1rem",
+    border: "1px solid #e2e8f0",
+    "border-radius": "6px",
+    "background-color": "#fbfdff",
   },
   tableCell: {
     padding: "0.75rem",

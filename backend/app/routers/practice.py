@@ -29,6 +29,6 @@ def review_practice_card(
     if result is None:
         raise HTTPException(
             status_code=404,
-            detail="The practice card and vocabulary item do not match.",
+            detail="The practice card and learning item do not match.",
         )
     return result

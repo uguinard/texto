@@ -1,9 +1,25 @@
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, col, select
 
-from ..models import Lexeme, PracticeCard, ReviewLog, Sentence, Text, Token, VocabItem
-from ..schemas import PracticeCardResponse, PracticeReviewRequest, PracticeReviewResponse
+from ..models import (
+    Lexeme,
+    PracticeCard,
+    ReviewLog,
+    SavedChunk,
+    SavedChunkPracticeCard,
+    SavedChunkReviewLog,
+    Sentence,
+    Text,
+    Token,
+    VocabItem,
+)
+from ..schemas import (
+    PracticeCardResponse,
+    PracticeReviewRequest,
+    PracticeReviewResponse,
+)
 
 
 MASTERY_STEP = 0.05
@@ -24,61 +40,131 @@ def create_practice_session(session: Session) -> list[PracticeCardResponse]:
             col(VocabItem.id),
         )
     ).all()
+    learning_chunks = session.exec(
+        select(SavedChunk)
+        .where(col(SavedChunk.state) == "learning")
+        .where(
+            col(SavedChunk.next_review).is_(None)
+            | (col(SavedChunk.next_review) <= now)
+        )
+        .order_by(
+            col(SavedChunk.next_review),
+            col(SavedChunk.created_at),
+            col(SavedChunk.id),
+        )
+    ).all()
 
-    cards: list[PracticeCard] = []
+    due_items: list[tuple[float, float, str, VocabItem | SavedChunk]] = []
     for item in learning_items:
+        due_items.append(
+            (
+                _sort_datetime(item.next_review),
+                _sort_datetime(item.created_at),
+                "word",
+                item,
+            )
+        )
+    for chunk in learning_chunks:
+        due_items.append(
+            (
+                _sort_datetime(chunk.next_review),
+                _sort_datetime(chunk.created_at),
+                "chunk",
+                chunk,
+            )
+        )
+
+    cards: list[PracticeCard | SavedChunkPracticeCard] = []
+    for _, _, item_type, item in sorted(due_items, key=lambda entry: entry[:2]):
         if len(cards) >= 10:
             break
-        if item.id is None:
-            continue
-
-        matching_occurrence = _find_occurrence(session, item)
-        if matching_occurrence is None:
-            continue
-
-        sentence, tokens, target_token = matching_occurrence
-        cloze_sentence = "".join(
-            "____" + token.whitespace_after
-            if token.id == target_token.id
-            else token.surface + token.whitespace_after
-            for token in tokens
-        )
-        lexeme = session.get(Lexeme, item.lexeme_id) if item.lexeme_id else None
-        card = PracticeCard(
-            vocab_item_id=item.id,
-            card_type="cloze",
-            sentence=cloze_sentence or sentence.content,
-            answer=target_token.surface,
-            hint=lexeme.translation if lexeme is not None else None,
-        )
+        if item_type == "word":
+            if not isinstance(item, VocabItem) or item.id is None:
+                continue
+            occurrence = _find_occurrence(session, item)
+            if occurrence is None:
+                continue
+            sentence, tokens, target_token = occurrence
+            cloze_sentence = "".join(
+                "____" + token.whitespace_after
+                if token.id == target_token.id
+                else token.surface + token.whitespace_after
+                for token in tokens
+            )
+            lexeme = session.get(Lexeme, item.lexeme_id) if item.lexeme_id else None
+            card: PracticeCard | SavedChunkPracticeCard = PracticeCard(
+                vocab_item_id=item.id,
+                card_type="cloze",
+                sentence=cloze_sentence or sentence.content,
+                answer=target_token.surface,
+                hint=lexeme.translation if lexeme is not None else None,
+            )
+        else:
+            if not isinstance(item, SavedChunk) or item.id is None:
+                continue
+            occurrence = _find_chunk_occurrence(session, item)
+            if occurrence is None:
+                continue
+            sentence, tokens, start_order, end_order = occurrence
+            cloze_sentence = _chunk_cloze_sentence(
+                sentence,
+                tokens,
+                start_order,
+                end_order,
+            )
+            card = SavedChunkPracticeCard(
+                saved_chunk_id=item.id,
+                card_type="cloze",
+                sentence=cloze_sentence,
+                answer=item.phrase,
+                hint=item.note,
+            )
         session.add(card)
         cards.append(card)
 
     session.commit()
+    responses: list[PracticeCardResponse] = []
     for card in cards:
         session.refresh(card)
         if card.id is None:
             raise RuntimeError("The database did not assign a practice card ID.")
-
-    return [
-        PracticeCardResponse(
-            id=card.id,
-            vocab_item_id=card.vocab_item_id,
-            card_type="cloze",
-            sentence=card.sentence,
-            answer=card.answer,
-            hint=card.hint,
-        )
-        for card in cards
-        if card.id is not None
-    ]
+        if isinstance(card, PracticeCard):
+            responses.append(
+                PracticeCardResponse(
+                    id=card.id,
+                    item_type="word",
+                    vocab_item_id=card.vocab_item_id,
+                    card_type="cloze",
+                    sentence=card.sentence,
+                    answer=card.answer,
+                    hint=card.hint,
+                )
+            )
+        else:
+            responses.append(
+                PracticeCardResponse(
+                    id=card.id,
+                    item_type="chunk",
+                    saved_chunk_id=card.saved_chunk_id,
+                    card_type="cloze",
+                    sentence=card.sentence,
+                    answer=card.answer,
+                    hint=card.hint,
+                )
+            )
+    return responses
 
 
 def record_practice_review(
     session: Session,
     request: PracticeReviewRequest,
 ) -> PracticeReviewResponse | None:
+    if request.saved_chunk_id is not None:
+        return _record_chunk_review(session, request)
+
     card = session.get(PracticeCard, request.card_id)
+    if request.vocab_item_id is None:
+        return None
     item = session.get(VocabItem, request.vocab_item_id)
     if (
         card is None
@@ -124,13 +210,62 @@ def record_practice_review(
     )
 
 
+def _record_chunk_review(
+    session: Session,
+    request: PracticeReviewRequest,
+) -> PracticeReviewResponse | None:
+    chunk_id = request.saved_chunk_id
+    if chunk_id is None:
+        return None
+    card = session.get(SavedChunkPracticeCard, request.card_id)
+    chunk = session.get(SavedChunk, chunk_id)
+    if (
+        card is None
+        or chunk is None
+        or card.saved_chunk_id != chunk.id
+        or card.id is None
+        or chunk.id is None
+    ):
+        return None
+
+    mastery_before = chunk.mastery
+    adjustment = MASTERY_STEP if request.correct else -MASTERY_STEP
+    chunk.mastery = min(1.0, max(0.0, mastery_before + adjustment))
+    now = datetime.now(timezone.utc)
+    if request.correct:
+        chunk.interval_days = max(1.0, chunk.interval_days * chunk.ease_factor)
+        chunk.next_review = now + timedelta(days=chunk.interval_days)
+    else:
+        chunk.interval_days = 0.0
+        chunk.next_review = now
+        chunk.ease_factor = max(1.3, chunk.ease_factor - 0.2)
+
+    session.add(
+        SavedChunkReviewLog(
+            card_id=card.id,
+            saved_chunk_id=chunk.id,
+            correct=request.correct,
+            answer_given=request.answer_given,
+            mastery_before=mastery_before,
+            mastery_after=chunk.mastery,
+        )
+    )
+    session.add(chunk)
+    session.commit()
+    session.refresh(chunk)
+    return PracticeReviewResponse(
+        card_id=card.id,
+        saved_chunk_id=chunk.id,
+        mastery=chunk.mastery,
+    )
+
+
 def _find_occurrence(
     session: Session,
     item: VocabItem,
 ) -> tuple[Sentence, list[Token], Token] | None:
     if item.id is None:
         return None
-
     tokens_and_sentences = session.exec(
         select(Token, Sentence)
         .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
@@ -162,3 +297,55 @@ def _find_occurrence(
         if target is not None:
             return sentence, tokens, target
     return None
+
+
+def _find_chunk_occurrence(
+    session: Session,
+    chunk: SavedChunk,
+) -> tuple[Sentence, Sequence[Token], int, int] | None:
+    sentence = session.get(Sentence, chunk.sentence_id)
+    start_token = session.get(Token, chunk.start_token_id)
+    end_token = session.get(Token, chunk.end_token_id)
+    if (
+        sentence is None
+        or start_token is None
+        or end_token is None
+        or sentence.text_id != chunk.text_id
+        or start_token.sentence_id != sentence.id
+        or end_token.sentence_id != sentence.id
+        or start_token.order_index > end_token.order_index
+    ):
+        return None
+    tokens = session.exec(
+        select(Token)
+        .where(col(Token.sentence_id) == sentence.id)
+        .order_by(col(Token.order_index))
+    ).all()
+    return sentence, tokens, start_token.order_index, end_token.order_index
+
+
+def _sort_datetime(value: datetime | None) -> float:
+    if value is None:
+        return float("-inf")
+    normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return normalized.timestamp()
+
+
+def _chunk_cloze_sentence(
+    sentence: Sentence,
+    tokens: Sequence[Token],
+    start_order: int,
+    end_order: int,
+) -> str:
+    parts: list[str] = []
+    for token in tokens:
+        if token.order_index == start_order:
+            parts.append("____")
+            if start_order == end_order:
+                parts.append(token.whitespace_after)
+        elif start_order < token.order_index <= end_order:
+            if token.order_index == end_order:
+                parts.append(token.whitespace_after)
+        else:
+            parts.append(token.surface + token.whitespace_after)
+    return "".join(parts) or sentence.content
