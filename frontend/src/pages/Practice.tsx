@@ -172,7 +172,7 @@ export default function Practice() {
 
   return (
     <AppShell>
-      <main style={{ flex: 1 }}>
+      <main class="practice-page-main">
         <section>
           <h2>Cloze practice</h2>
           <p>Recall a saved word or chunk in the sentence where you encountered it.</p>
@@ -238,12 +238,12 @@ export default function Practice() {
                         </div>
                       }
                     >
-                      <div style={{ display: "flex", gap: "0.5rem", "align-items": "center" }}>
+                      <div class="practice-action-row">
                         <button type="submit" disabled={!practiceAnswer().trim() || practiceSubmitting()}>
                           {practiceSubmitting() ? "Checking…" : "Check"}
                         </button>
                         <Show when={showAnswer()}>
-                          <span style={{ color: "#dc2626", "font-weight": "bold" }}>
+                          <span class="practice-answer-reveal">
                             {practiceCards()[practiceIndex()]?.answer}
                           </span>
                         </Show>

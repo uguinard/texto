@@ -287,7 +287,7 @@ export default function Lexicon() {
 
   return (
     <AppShell>
-      <main style={{ flex: 1 }}>
+      <main class="lexicon-page-main">
         <section>
           <h2>Lexicon</h2>
           <p>Saved words and multi-word chunks from your imported texts.</p>
@@ -348,8 +348,8 @@ export default function Lexicon() {
               when={(lexiconItems()?.length ?? 0) > 0}
               fallback={<p>No matching saved words.</p>}
             >
-              <div style={{ "overflow-x": "auto" }}>
-                <table style={{ width: "100%", "border-collapse": "collapse", "text-align": "left" }}>
+              <div class="lexicon-table-wrap">
+                <table class="lexicon-table">
                   <thead>
                     <tr>
                       <th>Word</th>
