@@ -97,6 +97,7 @@ def list_lexicon(
     session: Session,
     state: str | None = None,
     search: str | None = None,
+    vocab_item_id: int | None = None,
 ) -> list[LexiconItemResponse]:
     statement = select(VocabItem, Lexeme).join(
         Lexeme,
@@ -106,19 +107,27 @@ def list_lexicon(
         statement = statement.where(col(VocabItem.state) == state)
     if search:
         statement = statement.where(col(Lexeme.lemma).ilike(f"%{search}%"))
+    if vocab_item_id is not None:
+        statement = statement.where(col(VocabItem.id) == vocab_item_id)
 
     joined_items = session.exec(
         statement.order_by(col(Lexeme.lemma), col(VocabItem.id))
     ).all()
+    # Aggregate in SQL (one row per distinct language/surface) and only for the
+    # languages being listed, instead of loading every token into Python.
+    languages = {lexeme.language for _, lexeme in joined_items}
     exposures: dict[tuple[str, str], int] = {}
-    token_rows = session.exec(
-        select(col(Token.surface), col(Text.language))
-        .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
-        .join(Text, col(Sentence.text_id) == col(Text.id))
-    ).all()
-    for surface, language in token_rows:
-        key = (language.casefold(), surface.casefold())
-        exposures[key] = exposures.get(key, 0) + 1
+    if languages:
+        token_rows = session.exec(
+            select(col(Text.language), col(Token.surface), func.count(col(Token.id)))
+            .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
+            .join(Text, col(Sentence.text_id) == col(Text.id))
+            .where(col(Text.language).in_(languages))
+            .group_by(col(Text.language), col(Token.surface))
+        ).all()
+        for language, surface, count in token_rows:
+            key = (language.casefold(), surface.casefold())
+            exposures[key] = exposures.get(key, 0) + count
 
     result: list[LexiconItemResponse] = []
     for vocab_item, lexeme in joined_items:
@@ -169,14 +178,7 @@ def update_lexicon_state(
     vocab_item.state = request.state
     session.add(vocab_item)
     session.commit()
-    return next(
-        (
-            item
-            for item in list_lexicon(session)
-            if item.vocab_item_id == vocab_item_id
-        ),
-        None,
-    )
+    return next(iter(list_lexicon(session, vocab_item_id=vocab_item_id)), None)
 
 
 def delete_lexicon_item(session: Session, vocab_item_id: int) -> bool:

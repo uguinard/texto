@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+MAX_TEXT_LENGTH = 500_000
+
 AnnotationCategory = Literal[
     "lexical",
     "syntactic",
@@ -53,7 +55,7 @@ class WordContext(BaseModel):
 class TextImportRequest(BaseModel):
     title: str = Field(min_length=1)
     language: str = Field(min_length=1)
-    raw_text: str = Field(min_length=1)
+    raw_text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
 
     @field_validator("title", "language")
     @classmethod

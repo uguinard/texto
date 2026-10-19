@@ -294,37 +294,45 @@ def _find_occurrence(
 ) -> tuple[Sentence, list[Token], Token] | None:
     if item.id is None:
         return None
-    tokens_and_sentences = session.exec(
-        select(Token, Sentence)
-        .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
-        .join(Text, col(Sentence.text_id) == col(Text.id))
-        .where(col(Text.language) == item.language)
-        .order_by(col(Sentence.id), col(Token.order_index))
-    ).all()
     candidate_forms = {item.surface.casefold()}
     if item.lemma:
         candidate_forms.add(item.lemma.casefold())
 
-    grouped: dict[int, tuple[Sentence, list[Token]]] = {}
-    for token, sentence in tokens_and_sentences:
-        if sentence.id is None:
-            continue
-        if sentence.id not in grouped:
-            grouped[sentence.id] = (sentence, [])
-        grouped[sentence.id][1].append(token)
+    # Resolve matching surface spellings with a grouped query, then fetch only
+    # the first matching token instead of loading every token of the language.
+    surfaces = session.exec(
+        select(col(Token.surface))
+        .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
+        .join(Text, col(Sentence.text_id) == col(Text.id))
+        .where(col(Text.language) == item.language)
+        .group_by(col(Token.surface))
+    ).all()
+    matching_surfaces = [
+        surface for surface in surfaces if surface.casefold() in candidate_forms
+    ]
+    if not matching_surfaces:
+        return None
 
-    for sentence, tokens in grouped.values():
-        target = next(
-            (
-                token
-                for token in tokens
-                if token.surface.casefold() in candidate_forms
-            ),
-            None,
-        )
-        if target is not None:
-            return sentence, tokens, target
-    return None
+    first = session.exec(
+        select(Token, Sentence)
+        .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
+        .join(Text, col(Sentence.text_id) == col(Text.id))
+        .where(col(Text.language) == item.language)
+        .where(col(Token.surface).in_(matching_surfaces))
+        .order_by(col(Sentence.id), col(Token.order_index))
+        .limit(1)
+    ).first()
+    if first is None:
+        return None
+    target, sentence = first
+    tokens = list(
+        session.exec(
+            select(Token)
+            .where(col(Token.sentence_id) == sentence.id)
+            .order_by(col(Token.order_index))
+        ).all()
+    )
+    return sentence, tokens, target
 
 
 def _find_chunk_occurrence(

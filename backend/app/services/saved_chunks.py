@@ -91,7 +91,24 @@ def list_saved_chunks(session: Session) -> list[SavedChunkResponse]:
         select(SavedChunk)
         .order_by(col(SavedChunk.created_at).desc(), col(SavedChunk.id).desc())
     ).all()
-    return [_saved_chunk_response(session, chunk) for chunk in chunks]
+    texts = _by_id(session, Text, {chunk.text_id for chunk in chunks})
+    sentences = _by_id(session, Sentence, {chunk.sentence_id for chunk in chunks})
+    return [
+        _saved_chunk_response(
+            session,
+            chunk,
+            text=texts.get(chunk.text_id),
+            sentence=sentences.get(chunk.sentence_id),
+        )
+        for chunk in chunks
+    ]
+
+
+def _by_id(session: Session, model, ids: set[int]) -> dict:  # type: ignore[no-untyped-def]
+    if not ids:
+        return {}
+    rows = session.exec(select(model).where(col(model.id).in_(ids))).all()
+    return {row.id: row for row in rows}
 
 
 def update_saved_chunk(
@@ -128,9 +145,11 @@ def delete_saved_chunk(session: Session, chunk_id: int) -> bool:
 def _saved_chunk_response(
     session: Session,
     chunk: SavedChunk,
+    text: Text | None = None,
+    sentence: Sentence | None = None,
 ) -> SavedChunkResponse:
-    text = session.get(Text, chunk.text_id)
-    sentence = session.get(Sentence, chunk.sentence_id)
+    text = text or session.get(Text, chunk.text_id)
+    sentence = sentence or session.get(Sentence, chunk.sentence_id)
     if (
         chunk.id is None
         or chunk.created_at is None
