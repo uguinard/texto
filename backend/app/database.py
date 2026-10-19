@@ -1,17 +1,15 @@
-from pathlib import Path
-from collections.abc import Generator
-from datetime import datetime, timezone
 import re
-
-import shutil
 import sqlite3
+from collections.abc import Generator
+from datetime import UTC, datetime
+from pathlib import Path
 
-from sqlalchemy import event, inspect, text as sql_text
+from sqlalchemy import event, inspect
+from sqlalchemy import text as sql_text
 from sqlalchemy.engine import Engine, make_url
 from sqlmodel import Session, SQLModel, col, create_engine, select
 
 from .config import settings
-
 
 database_url = make_url(settings.database_url)
 if database_url.get_backend_name() == "sqlite" and database_url.database not in (None, ":memory:"):
@@ -98,7 +96,7 @@ def _backup_sqlite_database(target: Engine, next_version: int) -> None:
     source_path = Path(database)
     if not source_path.exists():
         return
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup_path = source_path.with_name(
         f"{source_path.name}.bak-before-v{next_version}-{stamp}"
     )
@@ -162,7 +160,7 @@ def _migrate_vocabulary_table(engine: Engine) -> None:
         lexemes = list(session.exec(select(Lexeme)).all())
         for item in session.exec(select(VocabItem)).all():
             if item.created_at is None:
-                item.created_at = datetime.now(timezone.utc)
+                item.created_at = datetime.now(UTC)
             if item.lexeme_id is not None:
                 continue
 

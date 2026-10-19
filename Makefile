@@ -1,7 +1,7 @@
 # Makefile for unified development workflow
 # Runs FastAPI backend (port 8000) and SolidJS frontend (port 5173) concurrently
 
-.PHONY: dev backend frontend install install-backend install-frontend
+.PHONY: dev backend frontend install install-backend install-frontend test lint typecheck check
 
 # Default target - runs both servers concurrently
 dev:
@@ -19,7 +19,7 @@ install: install-backend install-frontend
 
 install-backend:
 	@echo "Installing backend dependencies..."
-	cd backend && pip install -r requirements.txt
+	cd backend && pip install -r requirements-dev.txt
 
 install-frontend:
 	@echo "Installing frontend dependencies..."
@@ -32,3 +32,15 @@ backend:
 # Run only frontend
 frontend:
 	cd frontend && npm run dev
+
+# Quality checks
+test:
+	cd backend && python -m pytest -q
+
+lint:
+	cd backend && ruff check .
+
+typecheck:
+	cd frontend && npm run typecheck
+
+check: lint test typecheck

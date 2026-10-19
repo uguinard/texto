@@ -5,7 +5,6 @@ from ..database import get_session
 from ..schemas import TextImportRequest, TextImportResponse, TextListItem, TextRenderResponse
 from ..services.texts import create_text, delete_text, get_text_render, list_texts
 
-
 router = APIRouter(prefix="/api/texts", tags=["texts"])
 
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal, TypeGuard
 
 from sqlmodel import Session, col, select
@@ -124,7 +124,7 @@ def update_saved_chunk(
     if request.state is not None:
         chunk.state = request.state
         if request.state == "learning" and chunk.next_review is None:
-            chunk.next_review = datetime.now(timezone.utc)
+            chunk.next_review = datetime.now(UTC)
         elif request.state != "learning":
             chunk.next_review = None
     session.add(chunk)

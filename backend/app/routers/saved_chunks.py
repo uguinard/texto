@@ -14,7 +14,6 @@ from ..services.saved_chunks import (
     update_saved_chunk,
 )
 
-
 router = APIRouter(prefix="/api/lexicon/chunks", tags=["saved chunks"])
 
 

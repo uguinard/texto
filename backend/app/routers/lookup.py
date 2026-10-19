@@ -5,7 +5,6 @@ from ..database import get_session
 from ..schemas import LookupRequest, LookupResponse
 from ..services.lookup import mock_lookup
 
-
 router = APIRouter(prefix="/api", tags=["lookup"])
 
 

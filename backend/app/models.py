@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import ClassVar
 
 from sqlalchemy import Index, UniqueConstraint, event
@@ -22,7 +22,7 @@ class Text(SQLModel, table=True):
     language: str
     raw_text: str
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
 
     sentences: list["Sentence"] = Relationship(
@@ -72,7 +72,7 @@ class Annotation(SQLModel, table=True):
     category: str
     note: str | None = None
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
 
 
@@ -90,7 +90,7 @@ class VocabItem(SQLModel, table=True):
     state: str = Field(default="learning")
     lexeme_id: int | None = Field(default=None, foreign_key="lexemes.id")
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
     mastery: float = Field(default=0.5)
     next_review: datetime | None = None
@@ -126,7 +126,7 @@ class ReviewLog(SQLModel, table=True):
     mastery_before: float
     mastery_after: float
     reviewed_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
 
 
@@ -151,7 +151,7 @@ class SavedChunk(SQLModel, table=True):
     note: str | None = None
     state: str = Field(default="learning")
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
     mastery: float = Field(default=0.5)
     next_review: datetime | None = None
@@ -187,5 +187,5 @@ class SavedChunkReviewLog(SQLModel, table=True):
     mastery_before: float
     mastery_after: float
     reviewed_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )

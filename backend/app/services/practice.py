@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, col, select
 
@@ -20,7 +20,6 @@ from ..schemas import (
     PracticeReviewRequest,
     PracticeReviewResponse,
 )
-
 
 MASTERY_STEP = 0.05
 FAILED_RETRY_DELAY = timedelta(minutes=10)
@@ -60,7 +59,7 @@ def _apply_review(item: VocabItem | SavedChunk, correct: bool) -> None:
     """Update mastery and schedule; failed answers return after a short delay."""
     adjustment = MASTERY_STEP if correct else -MASTERY_STEP
     item.mastery = min(1.0, max(0.0, item.mastery + adjustment))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if correct:
         item.interval_days = (
             1.0 if item.interval_days < 1.0 else item.interval_days * item.ease_factor
@@ -74,7 +73,7 @@ def _apply_review(item: VocabItem | SavedChunk, correct: bool) -> None:
 
 
 def create_practice_session(session: Session) -> list[PracticeCardResponse]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     learning_items = session.exec(
         select(VocabItem)
         .where(col(VocabItem.state) == "learning")
@@ -363,7 +362,7 @@ def _find_chunk_occurrence(
 def _sort_datetime(value: datetime | None) -> float:
     if value is None:
         return float("-inf")
-    normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value
     return normalized.timestamp()
 
 
