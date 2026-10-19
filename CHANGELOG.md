@@ -6,6 +6,12 @@ The format is based on [keep-a-changelog](https://keepa-changelog.com/), and thi
 
 ## Unreleased
 
+### 2026-10-20 - Import and review timestamp guardrails
+
+- Reject imports above 10,000 sentences, 10,000 characters per sentence, or 100,000 tokens before writing to the database.
+- Normalize stored timestamps to UTC, treating legacy timezone-naive values as UTC; existing timestamp data is normalized by a backed-up migration.
+- Added API and migration tests for import limits, no partial writes, and timezone-aware due-date selection.
+
 ### 2026-10-15 17:15 - Skeleton verification
 
 - Verified FastAPI backend starts and all endpoints respond correctly:

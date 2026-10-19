@@ -305,12 +305,48 @@ def _dedupe_vocabulary(engine: Engine) -> None:
         )
 
 
+def _migrate_utc_timestamps(engine: Engine) -> None:
+    timestamp_columns = {
+        "texts": ("created_at",),
+        "annotations": ("created_at",),
+        "vocab_items": ("created_at", "next_review"),
+        "review_logs": ("reviewed_at",),
+        "saved_chunks": ("created_at", "next_review"),
+        "saved_chunk_review_logs": ("reviewed_at",),
+    }
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table, columns in timestamp_columns.items():
+            if not inspector.has_table(table):
+                continue
+            available = {column["name"] for column in inspector.get_columns(table)}
+            for column in columns:
+                if column not in available:
+                    continue
+                rows = connection.exec_driver_sql(
+                    f"SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL"
+                ).fetchall()
+                for row_id, raw_value in rows:
+                    value = datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+                    normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+                    connection.execute(
+                        sql_text(f"UPDATE {table} SET {column} = :value WHERE id = :id"),
+                        {
+                            "id": row_id,
+                            "value": normalized.replace(tzinfo=None).strftime(
+                                "%Y-%m-%d %H:%M:%S.%f"
+                            ),
+                        },
+                    )
+
+
 MIGRATIONS = [
     (1, _migrate_practice_columns),
     (2, _migrate_reader_metadata),
     (3, _migrate_vocabulary_table),
     (4, _backfill_tokens),
     (5, _dedupe_vocabulary),
+    (6, _migrate_utc_timestamps),
 ]
 
 

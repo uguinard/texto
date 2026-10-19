@@ -1,8 +1,25 @@
 from datetime import UTC, datetime
 from typing import ClassVar
 
-from sqlalchemy import Index, UniqueConstraint, event
+from sqlalchemy import DateTime, Index, UniqueConstraint, event
+from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, Relationship, SQLModel
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is None:
+            return None
+        normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        return normalized.replace(tzinfo=None)
+
+    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+        if value is None:
+            return None
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 class Lexeme(SQLModel, table=True):
@@ -22,7 +39,8 @@ class Text(SQLModel, table=True):
     language: str
     raw_text: str
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=UTCDateTime,
     )
 
     sentences: list["Sentence"] = Relationship(
@@ -72,7 +90,8 @@ class Annotation(SQLModel, table=True):
     category: str
     note: str | None = None
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=UTCDateTime,
     )
 
 
@@ -90,10 +109,11 @@ class VocabItem(SQLModel, table=True):
     state: str = Field(default="learning")
     lexeme_id: int | None = Field(default=None, foreign_key="lexemes.id")
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=UTCDateTime,
     )
     mastery: float = Field(default=0.5)
-    next_review: datetime | None = None
+    next_review: datetime | None = Field(default=None, sa_type=UTCDateTime)
     interval_days: float = Field(default=0.0)
     ease_factor: float = Field(default=2.5)
 
@@ -126,7 +146,8 @@ class ReviewLog(SQLModel, table=True):
     mastery_before: float
     mastery_after: float
     reviewed_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=UTCDateTime,
     )
 
 
@@ -151,10 +172,11 @@ class SavedChunk(SQLModel, table=True):
     note: str | None = None
     state: str = Field(default="learning")
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=UTCDateTime,
     )
     mastery: float = Field(default=0.5)
-    next_review: datetime | None = None
+    next_review: datetime | None = Field(default=None, sa_type=UTCDateTime)
     interval_days: float = Field(default=0.0)
     ease_factor: float = Field(default=2.5)
 
@@ -187,5 +209,6 @@ class SavedChunkReviewLog(SQLModel, table=True):
     mastery_before: float
     mastery_after: float
     reviewed_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=UTCDateTime,
     )

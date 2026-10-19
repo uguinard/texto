@@ -1,4 +1,5 @@
 import re
+from collections.abc import Iterator
 from typing import Literal
 
 from sqlalchemy import func
@@ -13,28 +14,82 @@ from ..schemas import (
     TextListItem,
     TextRenderResponse,
 )
-from .tokenizer import tokenize_sentence
+from .tokenizer import TokenPart, tokenize_sentence
+
+MAX_SENTENCES_PER_TEXT = 10_000
+MAX_SENTENCE_LENGTH = 10_000
+MAX_TOKENS_PER_TEXT = 100_000
+
+
+class TextImportLimitError(ValueError):
+    pass
 
 
 def split_sentences(raw_text: str) -> list[str]:
-    return [
-        sentence
-        for part in re.split(r"(?<=[.!?])\s+", raw_text.strip())
-        if (sentence := part.strip())
-    ]
+    return list(_iter_sentences(raw_text))
+
+
+def _iter_sentences(raw_text: str) -> Iterator[str]:
+    text = raw_text.strip()
+    start = 0
+    for boundary in re.finditer(r"(?<=[.!?])\s+", text):
+        sentence = text[start : boundary.start()].strip()
+        if sentence:
+            yield sentence
+        start = boundary.end()
+    sentence = text[start:].strip()
+    if sentence:
+        yield sentence
+
+
+def _iter_paragraphs(raw_text: str) -> Iterator[str]:
+    text = raw_text.strip()
+    start = 0
+    for boundary in re.finditer(r"(?:\r?\n)[ \t]*(?:\r?\n)+", text):
+        paragraph = text[start : boundary.start()].strip()
+        if paragraph:
+            yield paragraph
+        start = boundary.end()
+    paragraph = text[start:].strip()
+    if paragraph:
+        yield paragraph
 
 
 def split_paragraphs(raw_text: str) -> list[list[str]]:
-    return [
-        split_sentences(paragraph)
-        for part in re.split(r"(?:\r?\n)[ \t]*(?:\r?\n)+", raw_text.strip())
-        if (paragraph := part.strip())
-    ]
+    return [split_sentences(paragraph) for paragraph in _iter_paragraphs(raw_text)]
 
 
 def create_text(session: Session, request: TextImportRequest) -> TextImportResponse:
-    paragraphs = split_paragraphs(request.raw_text)
+    paragraphs: list[list[str]] = []
+    sentence_count = 0
+    for paragraph in _iter_paragraphs(request.raw_text):
+        sentence_list: list[str] = []
+        for sentence in _iter_sentences(paragraph):
+            sentence_count += 1
+            if sentence_count > MAX_SENTENCES_PER_TEXT:
+                raise TextImportLimitError(
+                    f"Text exceeds the limit of {MAX_SENTENCES_PER_TEXT} sentences."
+                )
+            sentence_list.append(sentence)
+        paragraphs.append(sentence_list)
+
     sentences = [sentence for paragraph in paragraphs for sentence in paragraph]
+
+    tokenized_sentences: list[list[TokenPart]] = []
+    token_count = 0
+    for sentence in sentences:
+        if len(sentence) > MAX_SENTENCE_LENGTH:
+            raise TextImportLimitError(
+                f"A sentence exceeds the limit of {MAX_SENTENCE_LENGTH} characters."
+            )
+        tokens = tokenize_sentence(sentence)
+        token_count += len(tokens)
+        if token_count > MAX_TOKENS_PER_TEXT:
+            raise TextImportLimitError(
+                f"Text exceeds the limit of {MAX_TOKENS_PER_TEXT} tokens."
+            )
+        tokenized_sentences.append(tokens)
+
     text = Text(
         title=request.title,
         language=request.language,
@@ -47,7 +102,7 @@ def create_text(session: Session, request: TextImportRequest) -> TextImportRespo
     if text_id is None:
         raise RuntimeError("The database did not assign an ID to the imported text.")
 
-    sentences_to_add: list[tuple[Sentence, str]] = []
+    sentences_to_add: list[Sentence] = []
     sentence_index = 0
     for paragraph_index, paragraph in enumerate(paragraphs):
         for sentence_content in paragraph:
@@ -57,14 +112,14 @@ def create_text(session: Session, request: TextImportRequest) -> TextImportRespo
                 paragraph_index=paragraph_index,
                 content=sentence_content,
             )
-            sentences_to_add.append((sentence, sentence_content))
+            sentences_to_add.append(sentence)
             sentence_index += 1
 
-    session.add_all(sentence for sentence, _ in sentences_to_add)
+    session.add_all(sentences_to_add)
     session.flush()
 
     tokens: list[Token] = []
-    for sentence, sentence_content in sentences_to_add:
+    for sentence, sentence_tokens in zip(sentences_to_add, tokenized_sentences, strict=True):
         sentence_id = sentence.id
         if sentence_id is None:
             raise RuntimeError("The database did not assign an ID to the sentence.")
@@ -75,7 +130,7 @@ def create_text(session: Session, request: TextImportRequest) -> TextImportRespo
                 surface=token.surface,
                 whitespace_after=token.whitespace_after,
             )
-            for token_index, token in enumerate(tokenize_sentence(sentence_content))
+            for token_index, token in enumerate(sentence_tokens)
         )
     session.add_all(tokens)
 

@@ -232,7 +232,7 @@ def test_migrations_run_once_with_backup(tmp_path) -> None:
         row[0]
         for row in engine.connect().exec_driver_sql("SELECT version FROM schema_migrations")
     ]
-    assert versions == [1, 2, 3, 4, 5]
+    assert versions == [1, 2, 3, 4, 5, 6]
 
     init_database(engine)
     assert len(list(tmp_path.glob("legacy.db.bak-*"))) == 1
@@ -244,5 +244,5 @@ def test_fresh_database_marks_migrations_applied_without_backup(tmp_path) -> Non
     init_database(engine)
     assert list(tmp_path.glob("*.bak-*")) == []
     count = engine.connect().exec_driver_sql("SELECT COUNT(*) FROM schema_migrations").scalar()
-    assert count == 5
+    assert count == 6
     engine.dispose()

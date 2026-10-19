@@ -7,6 +7,11 @@ from sqlmodel import Session
 from app.database import get_session, init_database
 from app.main import app
 from app.schemas import MAX_TEXT_LENGTH
+from app.services.texts import (
+    MAX_SENTENCE_LENGTH,
+    MAX_SENTENCES_PER_TEXT,
+    MAX_TOKENS_PER_TEXT,
+)
 from tests.test_p1_fixes import memory_engine
 
 
@@ -67,6 +72,36 @@ def test_import_validation(client: TestClient) -> None:
     )
     assert response.status_code == 422
     assert client.post("/api/texts", json={"title": "T"}).status_code == 422
+
+
+def test_import_limits_accept_sentence_boundary_and_reject_oversized_work(
+    client: TestClient,
+) -> None:
+    boundary = client.post(
+        "/api/texts",
+        json={
+            "title": "Boundary",
+            "language": "en",
+            "raw_text": "x" * MAX_SENTENCE_LENGTH,
+        },
+    )
+    assert boundary.status_code == 201
+
+    token_limit_sentences = MAX_TOKENS_PER_TEXT // 4_901 + 1
+    over_limit_inputs = (
+        "x" * (MAX_SENTENCE_LENGTH + 1),
+        ". " * (MAX_SENTENCES_PER_TEXT + 1),
+        ("x " * 4_900 + ". ") * token_limit_sentences,
+    )
+    for raw_text in over_limit_inputs:
+        response = client.post(
+            "/api/texts",
+            json={"title": "Too large", "language": "en", "raw_text": raw_text},
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]
+
+    assert [item["title"] for item in client.get("/api/texts").json()] == ["Boundary"]
 
 
 def test_vocab_save_is_idempotent_and_deletable(client: TestClient) -> None:

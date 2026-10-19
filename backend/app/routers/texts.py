@@ -3,7 +3,13 @@ from sqlmodel import Session
 
 from ..database import get_session
 from ..schemas import TextImportRequest, TextImportResponse, TextListItem, TextRenderResponse
-from ..services.texts import create_text, delete_text, get_text_render, list_texts
+from ..services.texts import (
+    TextImportLimitError,
+    create_text,
+    delete_text,
+    get_text_render,
+    list_texts,
+)
 
 router = APIRouter(prefix="/api/texts", tags=["texts"])
 
@@ -13,7 +19,10 @@ def import_text(
     request: TextImportRequest,
     session: Session = Depends(get_session),
 ) -> TextImportResponse:
-    return create_text(session, request)
+    try:
+        return create_text(session, request)
+    except TextImportLimitError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("", response_model=list[TextListItem])
