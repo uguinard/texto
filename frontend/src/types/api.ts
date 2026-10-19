@@ -26,23 +26,29 @@ export interface Text {
 }
 
 /**
- * Core LexiconItem entity for spaced repetition tracking
- * @see backend/app/schemas.py -> LexiconItem
- * @see backend/app/models.py -> VocabItem (with Lexeme join)
+ * Lexicon item response from the lexicon endpoint.
+ * @see backend/app/schemas.py -> LexiconItemResponse
+ * @see backend/app/routers/vocabulary.py -> get_lexicon
  */
-export interface LexiconItem {
-  /** Unique identifier */
-  id: number;
-  /** Word surface form */
-  surface: string;
+export interface LexiconItemResponse {
+  /** Vocabulary item ID (not the same as lexicon entry ID) */
+  vocab_item_id: number;
+  /** Language code */
+  language: string;
   /** Lemma/base form */
-  lemma: string | null;
+  lemma: string;
+  /** Surface form example */
+  surface_example: string;
   /** Translation/meaning */
   translation: string | null;
   /** Current learning state */
   state: "new" | "learning" | "known";
+  /** Number of exposures/encounters */
+  exposure_count: number;
+  /** Creation timestamp (ISO 8601) */
+  created_at: string; // ISO 8601 datetime string
   /** Next review date for spaced repetition (ISO 8601) */
-  next_review_date: string | null; // ISO 8601 datetime string
+  next_review: string | null; // ISO 8601 datetime string
 }
 
 /**

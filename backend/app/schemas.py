@@ -32,20 +32,6 @@ class Text(BaseModel):
     created_at: datetime
 
 
-class LexiconItem(BaseModel):
-    """
-    Core LexiconItem entity for spaced repetition tracking.
-    Corresponds to frontend: LexiconItem (frontend/src/types/api.ts)
-    Backing model: backend/app/models.py -> VocabItem (with Lexeme join)
-    """
-    id: int
-    surface: str
-    lemma: str | None
-    translation: str | None
-    state: Literal["new", "learning", "known"]
-    next_review_date: datetime | None
-
-
 class WordContext(BaseModel):
     """
     Word lookup context returned by the lookup endpoint.
