@@ -23,6 +23,54 @@ from ..schemas import (
 
 
 MASTERY_STEP = 0.05
+FAILED_RETRY_DELAY = timedelta(minutes=10)
+MIN_EASE = 1.3
+MAX_EASE = 3.0
+
+
+def _reuse_or_add_card(
+    session: Session,
+    card: PracticeCard | SavedChunkPracticeCard,
+) -> PracticeCard | SavedChunkPracticeCard:
+    """Return the stored card for the same item and sentence, adding it only if new."""
+    existing: PracticeCard | SavedChunkPracticeCard | None
+    if isinstance(card, PracticeCard):
+        existing = session.exec(
+            select(PracticeCard)
+            .where(col(PracticeCard.vocab_item_id) == card.vocab_item_id)
+            .where(col(PracticeCard.sentence) == card.sentence)
+            .where(col(PracticeCard.answer) == card.answer)
+        ).first()
+    else:
+        existing = session.exec(
+            select(SavedChunkPracticeCard)
+            .where(col(SavedChunkPracticeCard.saved_chunk_id) == card.saved_chunk_id)
+            .where(col(SavedChunkPracticeCard.sentence) == card.sentence)
+            .where(col(SavedChunkPracticeCard.answer) == card.answer)
+        ).first()
+    if existing is not None:
+        existing.hint = card.hint
+        session.add(existing)
+        return existing
+    session.add(card)
+    return card
+
+
+def _apply_review(item: VocabItem | SavedChunk, correct: bool) -> None:
+    """Update mastery and schedule; failed answers return after a short delay."""
+    adjustment = MASTERY_STEP if correct else -MASTERY_STEP
+    item.mastery = min(1.0, max(0.0, item.mastery + adjustment))
+    now = datetime.now(timezone.utc)
+    if correct:
+        item.interval_days = (
+            1.0 if item.interval_days < 1.0 else item.interval_days * item.ease_factor
+        )
+        item.ease_factor = min(MAX_EASE, item.ease_factor + 0.05)
+        item.next_review = now + timedelta(days=item.interval_days)
+    else:
+        item.interval_days = 0.0
+        item.ease_factor = max(MIN_EASE, item.ease_factor - 0.2)
+        item.next_review = now + FAILED_RETRY_DELAY
 
 
 def create_practice_session(session: Session) -> list[PracticeCardResponse]:
@@ -119,8 +167,7 @@ def create_practice_session(session: Session) -> list[PracticeCardResponse]:
                 answer=item.phrase,
                 hint=item.note,
             )
-        session.add(card)
-        cards.append(card)
+        cards.append(_reuse_or_add_card(session, card))
 
     session.commit()
     responses: list[PracticeCardResponse] = []
@@ -176,22 +223,12 @@ def record_practice_review(
         return None
 
     mastery_before = item.mastery
-    adjustment = MASTERY_STEP if request.correct else -MASTERY_STEP
-    item.mastery = min(1.0, max(0.0, mastery_before + adjustment))
-    now = datetime.now(timezone.utc)
-    if request.correct:
-        item.interval_days = max(1.0, item.interval_days * item.ease_factor)
-        item.next_review = now + timedelta(days=item.interval_days)
-    else:
-        item.interval_days = 0.0
-        item.next_review = now
-        item.ease_factor = max(1.3, item.ease_factor - 0.2)
-
+    _apply_review(item, request.correct and not request.answer_revealed)
     session.add(
         ReviewLog(
             card_id=card.id,
             vocab_item_id=item.id,
-            correct=request.correct,
+            correct=request.correct and not request.answer_revealed,
             answer_given=request.answer_given,
             mastery_before=mastery_before,
             mastery_after=item.mastery,
@@ -229,22 +266,13 @@ def _record_chunk_review(
         return None
 
     mastery_before = chunk.mastery
-    adjustment = MASTERY_STEP if request.correct else -MASTERY_STEP
-    chunk.mastery = min(1.0, max(0.0, mastery_before + adjustment))
-    now = datetime.now(timezone.utc)
-    if request.correct:
-        chunk.interval_days = max(1.0, chunk.interval_days * chunk.ease_factor)
-        chunk.next_review = now + timedelta(days=chunk.interval_days)
-    else:
-        chunk.interval_days = 0.0
-        chunk.next_review = now
-        chunk.ease_factor = max(1.3, chunk.ease_factor - 0.2)
+    _apply_review(chunk, request.correct and not request.answer_revealed)
 
     session.add(
         SavedChunkReviewLog(
             card_id=card.id,
             saved_chunk_id=chunk.id,
-            correct=request.correct,
+            correct=request.correct and not request.answer_revealed,
             answer_given=request.answer_given,
             mastery_before=mastery_before,
             mastery_after=chunk.mastery,
@@ -266,37 +294,45 @@ def _find_occurrence(
 ) -> tuple[Sentence, list[Token], Token] | None:
     if item.id is None:
         return None
-    tokens_and_sentences = session.exec(
-        select(Token, Sentence)
-        .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
-        .join(Text, col(Sentence.text_id) == col(Text.id))
-        .where(col(Text.language) == item.language)
-        .order_by(col(Sentence.id), col(Token.order_index))
-    ).all()
     candidate_forms = {item.surface.casefold()}
     if item.lemma:
         candidate_forms.add(item.lemma.casefold())
 
-    grouped: dict[int, tuple[Sentence, list[Token]]] = {}
-    for token, sentence in tokens_and_sentences:
-        if sentence.id is None:
-            continue
-        if sentence.id not in grouped:
-            grouped[sentence.id] = (sentence, [])
-        grouped[sentence.id][1].append(token)
+    # Resolve matching surface spellings with a grouped query, then fetch only
+    # the first matching token instead of loading every token of the language.
+    surfaces = session.exec(
+        select(col(Token.surface))
+        .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
+        .join(Text, col(Sentence.text_id) == col(Text.id))
+        .where(col(Text.language) == item.language)
+        .group_by(col(Token.surface))
+    ).all()
+    matching_surfaces = [
+        surface for surface in surfaces if surface.casefold() in candidate_forms
+    ]
+    if not matching_surfaces:
+        return None
 
-    for sentence, tokens in grouped.values():
-        target = next(
-            (
-                token
-                for token in tokens
-                if token.surface.casefold() in candidate_forms
-            ),
-            None,
-        )
-        if target is not None:
-            return sentence, tokens, target
-    return None
+    first = session.exec(
+        select(Token, Sentence)
+        .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
+        .join(Text, col(Sentence.text_id) == col(Text.id))
+        .where(col(Text.language) == item.language)
+        .where(col(Token.surface).in_(matching_surfaces))
+        .order_by(col(Sentence.id), col(Token.order_index))
+        .limit(1)
+    ).first()
+    if first is None:
+        return None
+    target, sentence = first
+    tokens = list(
+        session.exec(
+            select(Token)
+            .where(col(Token.sentence_id) == sentence.id)
+            .order_by(col(Token.order_index))
+        ).all()
+    )
+    return sentence, tokens, target
 
 
 def _find_chunk_occurrence(

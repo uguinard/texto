@@ -1,5 +1,7 @@
 from typing import Literal
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from ..models import Lexeme, Sentence, Text, Token, VocabItem
@@ -12,6 +14,18 @@ from ..schemas import (
 
 
 def save_token(session: Session, request: VocabSaveRequest) -> VocabItemResponse:
+    try:
+        return _save_token(session, request)
+    except IntegrityError:
+        # A concurrent save inserted the same word; retry to update that row.
+        session.rollback()
+        return _save_token(session, request)
+
+
+def _save_token(
+    session: Session,
+    request: VocabSaveRequest,
+) -> VocabItemResponse:
     token = session.get(Token, request.token_id)
     sentence = session.get(Sentence, token.sentence_id) if token is not None else None
     text = session.get(Text, request.text_id)
@@ -25,21 +39,15 @@ def save_token(session: Session, request: VocabSaveRequest) -> VocabItemResponse
         raise ValueError("The selected token does not belong to this text.")
 
     normalized_surface = token.surface.casefold()
-    existing_items = session.exec(
-        select(VocabItem).where(VocabItem.language == text.language)
-    ).all()
-    vocab_item = next(
-        (
-            item
-            for item in existing_items
-            if normalized_surface
-            in {
-                item.surface.casefold(),
-                item.lemma.casefold() if item.lemma is not None else "",
-            }
-        ),
-        None,
-    )
+    vocab_item = session.exec(
+        select(VocabItem)
+        .where(col(VocabItem.language) == text.language)
+        .where(
+            (col(VocabItem.surface_key) == normalized_surface)
+            | (func.lower(col(VocabItem.lemma)) == normalized_surface)
+        )
+        .order_by(col(VocabItem.id))
+    ).first()
 
     if vocab_item is None:
         vocab_item = VocabItem(
@@ -89,6 +97,7 @@ def list_lexicon(
     session: Session,
     state: str | None = None,
     search: str | None = None,
+    vocab_item_id: int | None = None,
 ) -> list[LexiconItemResponse]:
     statement = select(VocabItem, Lexeme).join(
         Lexeme,
@@ -98,19 +107,27 @@ def list_lexicon(
         statement = statement.where(col(VocabItem.state) == state)
     if search:
         statement = statement.where(col(Lexeme.lemma).ilike(f"%{search}%"))
+    if vocab_item_id is not None:
+        statement = statement.where(col(VocabItem.id) == vocab_item_id)
 
     joined_items = session.exec(
         statement.order_by(col(Lexeme.lemma), col(VocabItem.id))
     ).all()
+    # Aggregate in SQL (one row per distinct language/surface) and only for the
+    # languages being listed, instead of loading every token into Python.
+    languages = {lexeme.language for _, lexeme in joined_items}
     exposures: dict[tuple[str, str], int] = {}
-    token_rows = session.exec(
-        select(col(Token.surface), col(Text.language))
-        .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
-        .join(Text, col(Sentence.text_id) == col(Text.id))
-    ).all()
-    for surface, language in token_rows:
-        key = (language.casefold(), surface.casefold())
-        exposures[key] = exposures.get(key, 0) + 1
+    if languages:
+        token_rows = session.exec(
+            select(col(Text.language), col(Token.surface), func.count(col(Token.id)))
+            .join(Sentence, col(Token.sentence_id) == col(Sentence.id))
+            .join(Text, col(Sentence.text_id) == col(Text.id))
+            .where(col(Text.language).in_(languages))
+            .group_by(col(Text.language), col(Token.surface))
+        ).all()
+        for language, surface, count in token_rows:
+            key = (language.casefold(), surface.casefold())
+            exposures[key] = exposures.get(key, 0) + count
 
     result: list[LexiconItemResponse] = []
     for vocab_item, lexeme in joined_items:
@@ -161,14 +178,7 @@ def update_lexicon_state(
     vocab_item.state = request.state
     session.add(vocab_item)
     session.commit()
-    return next(
-        (
-            item
-            for item in list_lexicon(session)
-            if item.vocab_item_id == vocab_item_id
-        ),
-        None,
-    )
+    return next(iter(list_lexicon(session, vocab_item_id=vocab_item_id)), None)
 
 
 def delete_lexicon_item(session: Session, vocab_item_id: int) -> bool:

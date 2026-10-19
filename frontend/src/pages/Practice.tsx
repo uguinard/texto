@@ -7,6 +7,7 @@ import {
 } from "solid-js";
 import "../App.css";
 import AppShell from "../components/AppShell";
+import { answersMatch } from "../utils/answers";
 
 type PracticeCard = {
   id: number;
@@ -116,13 +117,12 @@ export default function Practice() {
     }
   });
 
-  const checkPracticeAnswer = async () => {
+  const submitReview = async (correct: boolean, answerGiven: string) => {
     const card = practiceCards()[practiceIndex()];
-    const answerGiven = practiceAnswer().trim();
-    if (!card || !answerGiven || practiceSubmitting() || practiceChecked()) return;
+    if (!card || practiceSubmitting() || practiceChecked()) return;
 
-    const correct =
-      answerGiven.toLocaleLowerCase() === card.answer.trim().toLocaleLowerCase();
+    const revealed = showAnswer();
+    const effectiveCorrect = correct && !revealed;
     setPracticeSubmitting(true);
     setPracticeReviewError(null);
     try {
@@ -132,8 +132,9 @@ export default function Practice() {
         body: JSON.stringify({
           card_id: card.id,
           ...(card.item_type === "word" ? { vocab_item_id: card.vocab_item_id } : { saved_chunk_id: card.saved_chunk_id }),
-          correct,
+          correct: effectiveCorrect,
           answer_given: answerGiven,
+          answer_revealed: revealed,
         }),
       });
       const body: unknown = await response.json();
@@ -143,10 +144,11 @@ export default function Practice() {
       if (!isPracticeReview(body)) {
         throw new Error("The backend returned an unexpected review response.");
       }
-      setPracticeAnswerCorrect(correct);
+      setPracticeAnswerCorrect(effectiveCorrect);
       setPracticeChecked(true);
+      setShowAnswer(true);
       setPracticeReviewed((count) => count + 1);
-      if (correct) setPracticeCorrect((count) => count + 1);
+      if (effectiveCorrect) setPracticeCorrect((count) => count + 1);
     } catch (requestError) {
       setPracticeReviewError(
         requestError instanceof Error ? requestError.message : "Unable to record this review.",
@@ -154,6 +156,18 @@ export default function Practice() {
     } finally {
       setPracticeSubmitting(false);
     }
+  };
+
+  const checkPracticeAnswer = () => {
+    const card = practiceCards()[practiceIndex()];
+    const answerGiven = practiceAnswer().trim();
+    if (!card || !answerGiven) return;
+    void submitReview(answersMatch(answerGiven, card.answer), answerGiven);
+  };
+
+  const dontKnow = () => {
+    setShowAnswer(true);
+    void submitReview(false, "");
   };
 
   const nextPracticeCard = () => {
@@ -164,11 +178,9 @@ export default function Practice() {
     setShowAnswer(false);
   };
 
-  const skipCard = () => {
+  const revealAnswer = () => {
     setShowAnswer(true);
   };
-
-  let skipCounter = 0;
 
   return (
     <AppShell>
@@ -222,7 +234,6 @@ export default function Practice() {
                       onInput={(event) => setPracticeAnswer(event.currentTarget.value)}
                       disabled={practiceSubmitting()}
                       autocomplete="off"
-                      required
                     />
                     <Show
                       when={!practiceChecked()}
@@ -231,7 +242,7 @@ export default function Practice() {
                           <p>
                             {practiceAnswerCorrect()
                               ? "Correct — you recalled the word in context."
-                              : "Not quite, but this is useful practice."}
+                              : "Not quite, but this is useful practice. It will come back soon."}
                           </p>
                           <p>Answer: <strong>{practiceCards()[practiceIndex()]?.answer}</strong></p>
                           <button type="button" onClick={nextPracticeCard}>Next</button>
@@ -242,12 +253,18 @@ export default function Practice() {
                         <button type="submit" disabled={!practiceAnswer().trim() || practiceSubmitting()}>
                           {practiceSubmitting() ? "Checking…" : "Check"}
                         </button>
+                        <button type="button" onClick={dontKnow} disabled={practiceSubmitting()}>
+                          I don't know
+                        </button>
+                        <button type="button" onClick={revealAnswer} disabled={showAnswer()}>
+                          Show answer
+                        </button>
                         <Show when={showAnswer()}>
                           <span class="practice-answer-reveal">
                             {practiceCards()[practiceIndex()]?.answer}
+                            {" "}(revealed answers count as missed)
                           </span>
                         </Show>
-                        <button type="button" onClick={skipCard}>Skip / Show Answer</button>
                       </div>
                     </Show>
                   </form>

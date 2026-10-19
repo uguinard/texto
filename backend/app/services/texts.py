@@ -47,6 +47,7 @@ def create_text(session: Session, request: TextImportRequest) -> TextImportRespo
     if text_id is None:
         raise RuntimeError("The database did not assign an ID to the imported text.")
 
+    sentences_to_add: list[tuple[Sentence, str]] = []
     sentence_index = 0
     for paragraph_index, paragraph in enumerate(paragraphs):
         for sentence_content in paragraph:
@@ -56,23 +57,27 @@ def create_text(session: Session, request: TextImportRequest) -> TextImportRespo
                 paragraph_index=paragraph_index,
                 content=sentence_content,
             )
-            session.add(sentence)
-            session.flush()
-
-            sentence_id = sentence.id
-            if sentence_id is None:
-                raise RuntimeError("The database did not assign an ID to the sentence.")
-
-            session.add_all(
-                Token(
-                    sentence_id=sentence_id,
-                    order_index=token_index,
-                    surface=token.surface,
-                    whitespace_after=token.whitespace_after,
-                )
-                for token_index, token in enumerate(tokenize_sentence(sentence_content))
-            )
+            sentences_to_add.append((sentence, sentence_content))
             sentence_index += 1
+
+    session.add_all(sentence for sentence, _ in sentences_to_add)
+    session.flush()
+
+    tokens: list[Token] = []
+    for sentence, sentence_content in sentences_to_add:
+        sentence_id = sentence.id
+        if sentence_id is None:
+            raise RuntimeError("The database did not assign an ID to the sentence.")
+        tokens.extend(
+            Token(
+                sentence_id=sentence_id,
+                order_index=token_index,
+                surface=token.surface,
+                whitespace_after=token.whitespace_after,
+            )
+            for token_index, token in enumerate(tokenize_sentence(sentence_content))
+        )
+    session.add_all(tokens)
 
     session.commit()
     session.refresh(text)
@@ -113,6 +118,15 @@ def list_texts(session: Session) -> list[TextListItem]:
     ]
 
 
+def delete_text(session: Session, text_id: int) -> bool:
+    text = session.get(Text, text_id)
+    if text is None:
+        return False
+    session.delete(text)
+    session.commit()
+    return True
+
+
 def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None:
     text = session.get(Text, text_id)
     if text is None:
@@ -130,11 +144,18 @@ def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None
     vocab_items = session.exec(
         select(VocabItem).where(VocabItem.language == text.language)
     ).all()
-    lexemes = {
-        lexeme.id: lexeme
-        for lexeme in session.exec(select(Lexeme)).all()
-        if lexeme.id is not None
-    }
+    lexeme_ids = {item.lexeme_id for item in vocab_items if item.lexeme_id is not None}
+    lexemes = (
+        {
+            lexeme.id: lexeme
+            for lexeme in session.exec(
+                select(Lexeme).where(col(Lexeme.id).in_(lexeme_ids))
+            ).all()
+            if lexeme.id is not None
+        }
+        if lexeme_ids
+        else {}
+    )
     vocab_states: dict[str, Literal["new", "learning", "known"]] = {}
     vocab_details: dict[str, tuple[str | None, str | None]] = {}
     for item in vocab_items:

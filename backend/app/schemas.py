@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+MAX_TEXT_LENGTH = 500_000
+
 AnnotationCategory = Literal[
     "lexical",
     "syntactic",
@@ -53,7 +55,7 @@ class WordContext(BaseModel):
 class TextImportRequest(BaseModel):
     title: str = Field(min_length=1)
     language: str = Field(min_length=1)
-    raw_text: str = Field(min_length=1)
+    raw_text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
 
     @field_validator("title", "language")
     @classmethod
@@ -192,6 +194,7 @@ class PracticeReviewRequest(BaseModel):
     saved_chunk_id: int | None = Field(default=None, gt=0)
     correct: bool
     answer_given: str
+    answer_revealed: bool = False
 
     @model_validator(mode="after")
     def require_one_learning_item(self) -> "PracticeReviewRequest":
