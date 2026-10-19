@@ -573,14 +573,46 @@
   background-color: #dcfce7;
 }
 
-.practice-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
+/* Lexicon page (migrated from inline styles) */
+.lexicon-page-main,
+.practice-page-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 1.5rem;
 }
 
-.practice-revealed {
+.lexicon-table-wrap {
+  overflow-x: auto;
+  margin-top: 1.25rem;
+}
+
+.lexicon-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.lexicon-table th,
+.lexicon-table td {
+  padding: 0.8rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.lexicon-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+}
+
+/* Practice page (migrated from inline styles) */
+.practice-action-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.practice-answer-reveal {
   color: #dc2626;
   font-weight: bold;
 }
