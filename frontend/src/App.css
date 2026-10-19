@@ -572,3 +572,15 @@
 .lexicon-state--known {
   background-color: #dcfce7;
 }
+
+.practice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.practice-revealed {
+  color: #dc2626;
+  font-weight: bold;
+}

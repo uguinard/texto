@@ -113,6 +113,15 @@ def list_texts(session: Session) -> list[TextListItem]:
     ]
 
 
+def delete_text(session: Session, text_id: int) -> bool:
+    text = session.get(Text, text_id)
+    if text is None:
+        return False
+    session.delete(text)
+    session.commit()
+    return True
+
+
 def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None:
     text = session.get(Text, text_id)
     if text is None:

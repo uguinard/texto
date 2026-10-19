@@ -1,5 +1,7 @@
 from typing import Literal
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from ..models import Lexeme, Sentence, Text, Token, VocabItem
@@ -12,6 +14,18 @@ from ..schemas import (
 
 
 def save_token(session: Session, request: VocabSaveRequest) -> VocabItemResponse:
+    try:
+        return _save_token(session, request)
+    except IntegrityError:
+        # A concurrent save inserted the same word; retry to update that row.
+        session.rollback()
+        return _save_token(session, request)
+
+
+def _save_token(
+    session: Session,
+    request: VocabSaveRequest,
+) -> VocabItemResponse:
     token = session.get(Token, request.token_id)
     sentence = session.get(Sentence, token.sentence_id) if token is not None else None
     text = session.get(Text, request.text_id)
@@ -25,21 +39,15 @@ def save_token(session: Session, request: VocabSaveRequest) -> VocabItemResponse
         raise ValueError("The selected token does not belong to this text.")
 
     normalized_surface = token.surface.casefold()
-    existing_items = session.exec(
-        select(VocabItem).where(VocabItem.language == text.language)
-    ).all()
-    vocab_item = next(
-        (
-            item
-            for item in existing_items
-            if normalized_surface
-            in {
-                item.surface.casefold(),
-                item.lemma.casefold() if item.lemma is not None else "",
-            }
-        ),
-        None,
-    )
+    vocab_item = session.exec(
+        select(VocabItem)
+        .where(col(VocabItem.language) == text.language)
+        .where(
+            (col(VocabItem.surface_key) == normalized_surface)
+            | (func.lower(col(VocabItem.lemma)) == normalized_surface)
+        )
+        .order_by(col(VocabItem.id))
+    ).first()
 
     if vocab_item is None:
         vocab_item = VocabItem(

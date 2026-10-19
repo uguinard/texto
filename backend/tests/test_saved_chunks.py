@@ -3,6 +3,7 @@ import unittest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from app.database import enable_sqlite_pragmas
 from app.models import (
     SavedChunkPracticeCard,
     SavedChunkReviewLog,
@@ -32,6 +33,7 @@ class SavedChunkServiceTests(unittest.TestCase):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
+        enable_sqlite_pragmas(self.engine)
         SQLModel.metadata.create_all(self.engine)
         self.session = Session(self.engine)
 
@@ -244,6 +246,7 @@ class SavedChunkServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(delete_saved_chunk(self.session, chunk.id))
+        self.session.expire_all()
         self.assertIsNone(
             self.session.get(SavedChunkPracticeCard, chunk_card.id)
         )

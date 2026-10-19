@@ -192,6 +192,7 @@ class PracticeReviewRequest(BaseModel):
     saved_chunk_id: int | None = Field(default=None, gt=0)
     correct: bool
     answer_given: str
+    answer_revealed: bool = False
 
     @model_validator(mode="after")
     def require_one_learning_item(self) -> "PracticeReviewRequest":

@@ -23,6 +23,54 @@ from ..schemas import (
 
 
 MASTERY_STEP = 0.05
+FAILED_RETRY_DELAY = timedelta(minutes=10)
+MIN_EASE = 1.3
+MAX_EASE = 3.0
+
+
+def _reuse_or_add_card(
+    session: Session,
+    card: PracticeCard | SavedChunkPracticeCard,
+) -> PracticeCard | SavedChunkPracticeCard:
+    """Return the stored card for the same item and sentence, adding it only if new."""
+    existing: PracticeCard | SavedChunkPracticeCard | None
+    if isinstance(card, PracticeCard):
+        existing = session.exec(
+            select(PracticeCard)
+            .where(col(PracticeCard.vocab_item_id) == card.vocab_item_id)
+            .where(col(PracticeCard.sentence) == card.sentence)
+            .where(col(PracticeCard.answer) == card.answer)
+        ).first()
+    else:
+        existing = session.exec(
+            select(SavedChunkPracticeCard)
+            .where(col(SavedChunkPracticeCard.saved_chunk_id) == card.saved_chunk_id)
+            .where(col(SavedChunkPracticeCard.sentence) == card.sentence)
+            .where(col(SavedChunkPracticeCard.answer) == card.answer)
+        ).first()
+    if existing is not None:
+        existing.hint = card.hint
+        session.add(existing)
+        return existing
+    session.add(card)
+    return card
+
+
+def _apply_review(item: VocabItem | SavedChunk, correct: bool) -> None:
+    """Update mastery and schedule; failed answers return after a short delay."""
+    adjustment = MASTERY_STEP if correct else -MASTERY_STEP
+    item.mastery = min(1.0, max(0.0, item.mastery + adjustment))
+    now = datetime.now(timezone.utc)
+    if correct:
+        item.interval_days = (
+            1.0 if item.interval_days < 1.0 else item.interval_days * item.ease_factor
+        )
+        item.ease_factor = min(MAX_EASE, item.ease_factor + 0.05)
+        item.next_review = now + timedelta(days=item.interval_days)
+    else:
+        item.interval_days = 0.0
+        item.ease_factor = max(MIN_EASE, item.ease_factor - 0.2)
+        item.next_review = now + FAILED_RETRY_DELAY
 
 
 def create_practice_session(session: Session) -> list[PracticeCardResponse]:
@@ -119,8 +167,7 @@ def create_practice_session(session: Session) -> list[PracticeCardResponse]:
                 answer=item.phrase,
                 hint=item.note,
             )
-        session.add(card)
-        cards.append(card)
+        cards.append(_reuse_or_add_card(session, card))
 
     session.commit()
     responses: list[PracticeCardResponse] = []
@@ -176,22 +223,12 @@ def record_practice_review(
         return None
 
     mastery_before = item.mastery
-    adjustment = MASTERY_STEP if request.correct else -MASTERY_STEP
-    item.mastery = min(1.0, max(0.0, mastery_before + adjustment))
-    now = datetime.now(timezone.utc)
-    if request.correct:
-        item.interval_days = max(1.0, item.interval_days * item.ease_factor)
-        item.next_review = now + timedelta(days=item.interval_days)
-    else:
-        item.interval_days = 0.0
-        item.next_review = now
-        item.ease_factor = max(1.3, item.ease_factor - 0.2)
-
+    _apply_review(item, request.correct and not request.answer_revealed)
     session.add(
         ReviewLog(
             card_id=card.id,
             vocab_item_id=item.id,
-            correct=request.correct,
+            correct=request.correct and not request.answer_revealed,
             answer_given=request.answer_given,
             mastery_before=mastery_before,
             mastery_after=item.mastery,
@@ -229,22 +266,13 @@ def _record_chunk_review(
         return None
 
     mastery_before = chunk.mastery
-    adjustment = MASTERY_STEP if request.correct else -MASTERY_STEP
-    chunk.mastery = min(1.0, max(0.0, mastery_before + adjustment))
-    now = datetime.now(timezone.utc)
-    if request.correct:
-        chunk.interval_days = max(1.0, chunk.interval_days * chunk.ease_factor)
-        chunk.next_review = now + timedelta(days=chunk.interval_days)
-    else:
-        chunk.interval_days = 0.0
-        chunk.next_review = now
-        chunk.ease_factor = max(1.3, chunk.ease_factor - 0.2)
+    _apply_review(chunk, request.correct and not request.answer_revealed)
 
     session.add(
         SavedChunkReviewLog(
             card_id=card.id,
             saved_chunk_id=chunk.id,
-            correct=request.correct,
+            correct=request.correct and not request.answer_revealed,
             answer_given=request.answer_given,
             mastery_before=mastery_before,
             mastery_after=chunk.mastery,

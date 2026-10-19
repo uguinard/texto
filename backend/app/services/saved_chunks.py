@@ -5,8 +5,6 @@ from sqlmodel import Session, col, select
 
 from ..models import (
     SavedChunk,
-    SavedChunkPracticeCard,
-    SavedChunkReviewLog,
     Sentence,
     Text,
     Token,
@@ -122,20 +120,6 @@ def delete_saved_chunk(session: Session, chunk_id: int) -> bool:
     chunk = session.get(SavedChunk, chunk_id)
     if chunk is None:
         return False
-    cards = session.exec(
-        select(SavedChunkPracticeCard).where(
-            col(SavedChunkPracticeCard.saved_chunk_id) == chunk_id
-        )
-    ).all()
-    reviews = session.exec(
-        select(SavedChunkReviewLog).where(
-            col(SavedChunkReviewLog.saved_chunk_id) == chunk_id
-        )
-    ).all()
-    for review in reviews:
-        session.delete(review)
-    for card in cards:
-        session.delete(card)
     session.delete(chunk)
     session.commit()
     return True

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import ClassVar
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint, event
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -78,10 +78,14 @@ class Annotation(SQLModel, table=True):
 
 class VocabItem(SQLModel, table=True):
     __tablename__: ClassVar[str] = "vocab_items"
+    __table_args__ = (
+        Index("uq_vocab_language_surface_key", "language", "surface_key", unique=True),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     language: str = Field(index=True)
     surface: str
+    surface_key: str = Field(default="")
     lemma: str | None = None
     state: str = Field(default="learning")
     lexeme_id: int | None = Field(default=None, foreign_key="lexemes.id")
@@ -92,6 +96,12 @@ class VocabItem(SQLModel, table=True):
     next_review: datetime | None = None
     interval_days: float = Field(default=0.0)
     ease_factor: float = Field(default=2.5)
+
+
+@event.listens_for(VocabItem, "before_insert")
+@event.listens_for(VocabItem, "before_update")
+def _set_vocab_surface_key(_mapper, _connection, target: VocabItem) -> None:  # type: ignore[no-untyped-def]
+    target.surface_key = target.surface.casefold()
 
 
 class PracticeCard(SQLModel, table=True):
