@@ -13,6 +13,57 @@ AnnotationCategory = Literal[
 ]
 
 
+# =============================================================================
+# Core API-First Contract Schemas
+# These schemas define the strict contract between FastAPI backend and SolidJS frontend.
+# Frontend TypeScript interfaces in `frontend/src/types/api.ts` must mirror these exactly.
+# =============================================================================
+
+
+class Text(BaseModel):
+    """
+    Core Text entity.
+    Corresponds to frontend: Text (frontend/src/types/api.ts)
+    Backing model: backend/app/models.py -> Text
+    """
+    id: int
+    title: str
+    content: str
+    created_at: datetime
+
+
+class LexiconItem(BaseModel):
+    """
+    Core LexiconItem entity for spaced repetition tracking.
+    Corresponds to frontend: LexiconItem (frontend/src/types/api.ts)
+    Backing model: backend/app/models.py -> VocabItem (with Lexeme join)
+    """
+    id: int
+    surface: str
+    lemma: str | None
+    translation: str | None
+    state: Literal["new", "learning", "known"]
+    next_review_date: datetime | None
+
+
+class WordContext(BaseModel):
+    """
+    Word lookup context returned by the lookup endpoint.
+    Corresponds to frontend: WordContext (frontend/src/types/api.ts)
+    Backing service: backend/app/services/lookup.py -> mock_lookup
+    """
+    word: str
+    sentence: str
+    definition: str | None
+    translation: str | None
+    confidence: Literal["high", "medium", "low"]
+
+
+# =============================================================================
+# Existing Request/Response Schemas (unchanged, kept for backward compatibility)
+# =============================================================================
+
+
 class TextImportRequest(BaseModel):
     title: str = Field(min_length=1)
     language: str = Field(min_length=1)
