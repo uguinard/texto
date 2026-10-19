@@ -3,7 +3,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 MAX_TEXT_LENGTH = 500_000
 
 AnnotationCategory = Literal[

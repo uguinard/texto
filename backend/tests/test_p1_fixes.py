@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -134,14 +134,14 @@ def _setup_item(session: Session) -> VocabItem:
 def _next_review(item: VocabItem) -> datetime:
     value = item.next_review
     assert value is not None
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def test_failed_review_is_not_due_immediately_and_logs_failure(session: Session) -> None:
     item = _setup_item(session)
     _review(session, correct=False, given="")
     session.refresh(item)
-    assert _next_review(item) > datetime.now(timezone.utc) + timedelta(minutes=5)
+    assert _next_review(item) > datetime.now(UTC) + timedelta(minutes=5)
     assert create_practice_session(session) == []
     assert session.exec(select(ReviewLog)).one().correct is False
 

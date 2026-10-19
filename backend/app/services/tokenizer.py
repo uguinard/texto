@@ -1,7 +1,6 @@
 import re
 from dataclasses import dataclass
 
-
 TOKEN_PATTERN = re.compile(r"\w+(?:['’]\w+)*|[^\w\s]", re.UNICODE)
 
 

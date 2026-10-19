@@ -1,8 +1,7 @@
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
 from pydantic import Field
-
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "lector.db"
 
@@ -22,9 +21,7 @@ class Settings(BaseSettings):
     # Mock LLM settings
     mock_lookup_delay_ms: int = Field(default=100, description="Simulated delay for mock lookup")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
 settings = Settings()

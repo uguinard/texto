@@ -3,6 +3,7 @@ from pydantic import ValidationError
 from sqlalchemy import event
 from sqlmodel import Session, select
 
+from app.database import init_database
 from app.models import Sentence, Token
 from app.schemas import (
     MAX_TEXT_LENGTH,
@@ -16,7 +17,6 @@ from app.services.saved_chunks import create_saved_chunk, list_saved_chunks
 from app.services.texts import create_text, get_text_render
 from app.services.vocabulary import list_lexicon, save_token, update_lexicon_state
 from tests.test_p1_fixes import import_text, memory_engine, token_id
-from app.database import init_database
 
 
 @pytest.fixture
@@ -108,11 +108,11 @@ def test_saved_chunk_list_has_constant_queries(session: Session) -> None:
     text_id = import_text(session, "One two three four five six seven eight.")
     ids = [token_id(session, w) for w in ("One", "two", "three", "four", "five", "six")]
     sentence_id = session.exec(select(Sentence.id)).first()
-    for start, end in zip(ids, ids):
+    for token in ids:
         create_saved_chunk(
             session,
             SavedChunkCreateRequest(
-                text_id=text_id, sentence_id=sentence_id, start_token_id=start, end_token_id=end
+                text_id=text_id, sentence_id=sentence_id, start_token_id=token, end_token_id=token
             ),
         )
     with QueryCounter(session) as counter:

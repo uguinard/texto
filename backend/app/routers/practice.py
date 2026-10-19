@@ -9,7 +9,6 @@ from ..schemas import (
 )
 from ..services.practice import create_practice_session, record_practice_review
 
-
 router = APIRouter(prefix="/api/practice", tags=["practice"])
 
 

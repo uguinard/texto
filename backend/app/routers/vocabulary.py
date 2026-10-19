@@ -17,7 +17,6 @@ from ..services.vocabulary import (
     update_lexicon_state,
 )
 
-
 router = APIRouter(tags=["vocabulary"])
 
 

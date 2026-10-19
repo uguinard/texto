@@ -9,7 +9,6 @@ from ..services.annotations import (
     list_text_annotations,
 )
 
-
 router = APIRouter(tags=["annotations"])
 
 
