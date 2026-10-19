@@ -1,4 +1,4 @@
-import { A, useLocation, useNavigate } from "@solidjs/router";
+import { useLocation } from "@solidjs/router";
 import {
   createMemo,
   createResource,
@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 import type { JSX } from "solid-js";
 import "./App.css";
+import AppShell from "./components/AppShell";
 
 type TextListItem = {
   id: number;
@@ -509,7 +510,6 @@ function getErrorMessage(value: unknown): string | null {
 
 function App() {
   const location = useLocation();
-  const navigate = useNavigate();
   const [currentView, setCurrentView] = createSignal<"reader" | "lexicon" | "practice">(
     location.pathname === "/practice" ? "practice" : "lexicon",
   );
@@ -1185,55 +1185,7 @@ function App() {
   };
 
   return (
-    <div style={styles.container}>
-      <header style={styles.header}>
-        <h1 style={styles.title}>Lector</h1>
-        <p style={styles.subtitle}>Personal Language-Learning Reader</p>
-      </header>
-
-      <nav style={styles.navigation} aria-label="Main navigation">
-        <A
-          style={styles.navButton}
-          href="/library"
-          aria-current={location.pathname === "/library" ? "page" : undefined}
-        >
-          Library
-        </A>
-        <button
-          style={styles.navButton}
-          type="button"
-          onClick={() => navigate("/library")}
-        >
-          Reader
-        </button>
-        <button
-          style={currentView() === "lexicon" ? styles.navButtonActive : styles.navButton}
-          type="button"
-          aria-current={currentView() === "lexicon" ? "page" : undefined}
-          onClick={() => {
-            closeLookup();
-            setLexiconActionError(null);
-            setCurrentView("lexicon");
-            navigate("/lexicon");
-          }}
-        >
-          Lexicon
-        </button>
-        <button
-          style={currentView() === "practice" ? styles.navButtonActive : styles.navButton}
-          type="button"
-          aria-current={currentView() === "practice" ? "page" : undefined}
-          onClick={() => {
-            closeLookup();
-            setCurrentView("practice");
-            navigate("/practice");
-            void loadPracticeSession();
-          }}
-        >
-          Practice
-        </button>
-      </nav>
-
+    <AppShell>
       <main style={styles.main}>
         <Show when={currentView() === "reader"}>
           <>
@@ -1946,7 +1898,7 @@ function App() {
       <footer style={styles.footer}>
         <p>Lector — Local-first language learning</p>
       </footer>
-    </div>
+    </AppShell>
   );
 }
 
@@ -1956,48 +1908,9 @@ const styles: Record<string, JSX.CSSProperties> = {
     "max-width": "800px",
     margin: "0 auto",
     padding: "2rem 1rem",
-    "min-height": "100vh",
     display: "flex",
     "flex-direction": "column",
-  },
-  header: {
-    "text-align": "center",
-    "margin-bottom": "2rem",
-    "padding-bottom": "1rem",
-    "border-bottom": "1px solid #e0e0e0",
-  },
-  navigation: {
-    display: "flex",
-    "justify-content": "center",
-    gap: "0.5rem",
-    "margin-bottom": "1.5rem",
-  },
-  navButton: {
-    padding: "0.6rem 1rem",
-    color: "#334155",
-    "background-color": "#f8fafc",
-    border: "1px solid #cbd5e1",
-    "border-radius": "4px",
-    cursor: "pointer",
-  },
-  navButtonActive: {
-    padding: "0.6rem 1rem",
-    color: "white",
-    "background-color": "#2563eb",
-    border: "1px solid #2563eb",
-    "border-radius": "4px",
-    cursor: "pointer",
-  },
-  title: {
-    margin: 0,
-    "font-size": "2.5rem",
-    "font-weight": 600,
-    color: "#1a1a2e",
-  },
-  subtitle: {
-    margin: "0.5rem 0 0",
-    color: "#666",
-    "font-size": "1.1rem",
+    flex: 1,
   },
   main: {
     flex: 1,

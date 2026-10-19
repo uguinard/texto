@@ -12,33 +12,44 @@
   overflow: hidden;
 }
 
-.app-header {
-  flex: 0 0 auto;
-  padding: 0.8rem 1.5rem 0.55rem;
-  text-align: center;
-  background: #fff;
-}
-
-.app-header h1 {
-  margin: 0;
-  color: #1a1a2e;
-  font-size: 1.8rem;
-}
-
-.app-header p {
-  margin: 0.2rem 0 0;
-  color: #64748b;
-}
-
-.app-navigation {
+.app-topbar {
   z-index: 3;
   flex: 0 0 auto;
   display: flex;
-  justify-content: center;
-  gap: 0.45rem;
-  padding: 0.55rem 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  padding: 0.6rem 1.5rem;
   border-bottom: 1px solid #e2e8f0;
   background: #fff;
+}
+
+.app-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.app-brand h1 {
+  margin: 0;
+  color: #1a1a2e;
+  font-size: 1.4rem;
+  line-height: 1.2;
+}
+
+.app-brand p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.app-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .app-navigation a {
