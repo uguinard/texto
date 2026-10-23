@@ -2,6 +2,7 @@ export type ReaderToken = {
   id: number;
   surface: string;
   lemma: string | null;
+  lexeme_id?: number | null;
   pos: string | null;
   translation: string | null;
   sentence_id: number;
@@ -37,19 +38,14 @@ type TokenSpanProps = {
     token: ReaderToken,
     column: 1 | 2 | 3,
     shiftKey: boolean,
+    altKey: boolean,
   ) => void;
+  onFocus: (token: ReaderToken) => void;
   onActivate: (token: ReaderToken, column: 1 | 2 | 3) => void;
   onPointerDown: (
     token: ReaderToken,
     pointerId: number,
     shiftKey: boolean,
-  ) => void;
-  onArrowNavigate: (
-    token: ReaderToken,
-    key: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight",
-    element: HTMLSpanElement,
-    shiftKey: boolean,
-    altKey: boolean,
   ) => void;
 };
 
@@ -61,6 +57,7 @@ export default function TokenSpan(props: TokenSpanProps) {
       class={`reader-token reader-token--${props.token.state}${props.annotationCategory ? ` reader-token--annotation-${props.annotationCategory}` : ""}${props.selected ? " reader-token--selected" : ""}`}
       data-column={props.column}
       data-token-id={props.token.id}
+      data-sentence-id={props.token.sentence_id}
       aria-keyshortcuts={
         isWord
           ? "ArrowUp ArrowDown ArrowLeft ArrowRight Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight Enter Space"
@@ -83,27 +80,20 @@ export default function TokenSpan(props: TokenSpanProps) {
       }}
       onClick={(event) => {
         if (isWord) {
-          props.onClick(props.token, props.column, event.shiftKey);
-        }
-      }}
-      onKeyDown={(event) => {
-        if (
-          isWord &&
-          (event.key === "ArrowUp" ||
-            event.key === "ArrowDown" ||
-            event.key === "ArrowLeft" ||
-            event.key === "ArrowRight")
-        ) {
-          event.preventDefault();
-          props.onArrowNavigate(
+          props.onClick(
             props.token,
-            event.key,
-            event.currentTarget,
+            props.column,
             event.shiftKey,
             event.altKey,
           );
-          return;
         }
+      }}
+      onFocus={() => {
+        if (isWord) {
+          props.onFocus(props.token);
+        }
+      }}
+      onKeyDown={(event) => {
         if (isWord && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           props.onActivate(props.token, props.column);

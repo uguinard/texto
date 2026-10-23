@@ -10,6 +10,7 @@
   height: 100vh;
   min-height: 0;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .app-topbar {
@@ -73,10 +74,55 @@
   width: 100%;
 }
 
+.app-shell--reader .app-main,
+.app-shell--reader .reader-page {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 .library-page {
   max-width: 1100px;
   margin: 0 auto;
   padding: 1.5rem;
+}
+
+.starter-stories {
+  margin-top: 1.5rem;
+}
+
+.starter-stories__heading h3,
+.starter-story h4 {
+  margin: 0;
+  color: #1e293b;
+}
+
+.starter-stories__heading p {
+  margin: 0.35rem 0 0;
+  color: #64748b;
+}
+
+.starter-stories__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.starter-story {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 0.7rem;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.starter-story__language {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.85rem;
 }
 
 .page-heading,
@@ -464,15 +510,6 @@
 .reader-token:focus-visible {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
-}
-
-.reader-selection-range .reader-token:focus-visible {
-  outline: none;
-}
-
-.reader-sentence--active .reader-token:focus-visible,
-.reader-sentence--selected .reader-token:focus-visible {
-  outline: none;
 }
 
 .reader-selection-range {

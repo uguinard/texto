@@ -114,7 +114,17 @@ def test_vocab_save_is_idempotent_and_deletable(client: TestClient) -> None:
     second = client.post("/api/vocab", json=payload)
     assert first.status_code == second.status_code == 200
     assert first.json()["id"] == second.json()["id"]
+    lexeme_id = first.json()["lexeme_id"]
+    assert isinstance(lexeme_id, int)
     assert len(client.get("/api/lexicon").json()) == 1
+    rendered_token = next(
+        token
+        for sentence in client.get(f"/api/texts/{text_id}/render").json()["sentences"]
+        for token in sentence["tokens"]
+        if token["id"] == payload["token_id"]
+    )
+    assert rendered_token["lexeme_id"] == lexeme_id
+    assert rendered_token["state"] == "learning"
 
     item_id = first.json()["id"]
     assert client.delete(f"/api/lexicon/{item_id}").status_code == 204
