@@ -1,6 +1,7 @@
 import { A, useNavigate } from "@solidjs/router";
 import { createResource, createSignal, For, Show } from "solid-js";
 import AppShell from "../components/AppShell";
+import { starterStories } from "../data/starterStories";
 
 type LibraryText = {
   id: number;
@@ -66,6 +67,8 @@ export default function Library() {
   const [rawText, setRawText] = createSignal("");
   const [importing, setImporting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [openingStoryId, setOpeningStoryId] = createSignal<string | null>(null);
+  const [storyError, setStoryError] = createSignal<string | null>(null);
 
   const [texts] = createResource(refreshKey, async (): Promise<LibraryText[]> => {
     const response = await fetch("/api/texts");
@@ -116,6 +119,54 @@ export default function Library() {
     }
   };
 
+  const openStarterStory = async (storyId: string) => {
+    const story = starterStories.find((item) => item.id === storyId);
+    if (!story || openingStoryId() !== null) {
+      return;
+    }
+
+    setOpeningStoryId(storyId);
+    setStoryError(null);
+    try {
+      const existingStory = (texts() ?? []).find(
+        (text) =>
+          text.title === story.title &&
+          text.language.toLocaleLowerCase() === story.language.toLocaleLowerCase(),
+      );
+      if (existingStory) {
+        await navigate(`/read/${existingStory.id}`);
+        return;
+      }
+
+      const response = await fetch("/api/texts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: story.title,
+          language: story.language,
+          raw_text: story.rawText,
+        }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(errorDetail(body) ?? "Unable to open this story.");
+      }
+      if (!isImportResult(body)) {
+        throw new Error("The backend returned an unexpected story response.");
+      }
+      setRefreshKey((key) => key + 1);
+      await navigate(`/read/${body.id}`);
+    } catch (requestError) {
+      setStoryError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to open this story.",
+      );
+    } finally {
+      setOpeningStoryId(null);
+    }
+  };
+
   return (
     <AppShell>
       <section class="library-page">
@@ -125,6 +176,51 @@ export default function Library() {
             <p>Your imported texts, ready to read.</p>
           </div>
         </div>
+
+        <section class="starter-stories" aria-labelledby="starter-stories-title">
+          <div class="starter-stories__heading">
+            <div>
+              <h3 id="starter-stories-title">Reading stories</h3>
+              <p>Don Quixote, Chapter I: the Spanish original and translations.</p>
+            </div>
+          </div>
+          <Show when={storyError()}>
+            <p class="message-error" role="alert">{storyError()}</p>
+          </Show>
+          <div class="starter-stories__grid">
+            <For each={starterStories}>
+              {(story) => {
+                const existingStory = () =>
+                  (texts() ?? []).find(
+                    (text) =>
+                      text.title === story.title &&
+                      text.language.toLocaleLowerCase() ===
+                        story.language.toLocaleLowerCase(),
+                  );
+                return (
+                  <article class="starter-story">
+                    <p class="starter-story__language">{story.language}</p>
+                    <h4>{story.title}</h4>
+                    <button
+                      class="secondary-button"
+                      type="button"
+                      disabled={
+                        texts.loading || openingStoryId() !== null
+                      }
+                      onClick={() => void openStarterStory(story.id)}
+                    >
+                      {openingStoryId() === story.id
+                        ? "Opening…"
+                        : existingStory()
+                          ? "Read story"
+                          : "Add and read"}
+                    </button>
+                  </article>
+                );
+              }}
+            </For>
+          </div>
+        </section>
 
         <Show when={texts.loading}>
           <p class="muted-message">Loading your library…</p>

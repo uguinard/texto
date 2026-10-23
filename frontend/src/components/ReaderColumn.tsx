@@ -37,19 +37,18 @@ type ReaderColumnProps = {
     y: number,
   ) => void;
   onLeave: () => void;
-  onClick: (token: ReaderToken, column: 1 | 2 | 3, shiftKey: boolean) => void;
+  onClick: (
+    token: ReaderToken,
+    column: 1 | 2 | 3,
+    shiftKey: boolean,
+    altKey: boolean,
+  ) => void;
+  onFocus: (token: ReaderToken) => void;
   onActivate: (token: ReaderToken, column: 1 | 2 | 3) => void;
   onPointerDown: (
     token: ReaderToken,
     pointerId: number,
     shiftKey: boolean,
-  ) => void;
-  onArrowNavigate: (
-    token: ReaderToken,
-    key: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight",
-    element: HTMLSpanElement,
-    shiftKey: boolean,
-    altKey: boolean,
   ) => void;
   showPanel: boolean;
   panel: JSX.Element;
@@ -76,9 +75,9 @@ function ParagraphTokens(props: {
   onHover: ReaderColumnProps["onHover"];
   onLeave: ReaderColumnProps["onLeave"];
   onClick: ReaderColumnProps["onClick"];
+  onFocus: ReaderColumnProps["onFocus"];
   onActivate: ReaderColumnProps["onActivate"];
   onPointerDown: ReaderColumnProps["onPointerDown"];
-  onArrowNavigate: ReaderColumnProps["onArrowNavigate"];
 }) {
   const groups = createMemo(() => {
     const items: ParagraphItem[] = [];
@@ -164,9 +163,9 @@ function ParagraphTokens(props: {
                   onHover={props.onHover}
                   onLeave={props.onLeave}
                   onClick={props.onClick}
+                  onFocus={props.onFocus}
                   onActivate={props.onActivate}
                   onPointerDown={props.onPointerDown}
-                  onArrowNavigate={props.onArrowNavigate}
                 />
                 <span class="reader-whitespace" aria-hidden="true">
                   {token.whitespace_after}
@@ -240,9 +239,9 @@ export default function ReaderColumn(props: ReaderColumnProps) {
                 onHover={props.onHover}
                 onLeave={props.onLeave}
                 onClick={props.onClick}
+                onFocus={props.onFocus}
                 onActivate={props.onActivate}
                 onPointerDown={props.onPointerDown}
-                onArrowNavigate={props.onArrowNavigate}
               />
             </p>
           )}

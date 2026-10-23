@@ -212,7 +212,7 @@ def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None
         else {}
     )
     vocab_states: dict[str, Literal["new", "learning", "known"]] = {}
-    vocab_details: dict[str, tuple[str | None, str | None]] = {}
+    vocab_details: dict[str, tuple[str | None, str | None, int | None]] = {}
     for item in vocab_items:
         if item.state == "new":
             item_state: Literal["new", "learning", "known"] = "new"
@@ -234,6 +234,7 @@ def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None
             vocab_details[normalized_form] = (
                 item.lemma or (lexeme.lemma if lexeme is not None else None),
                 lexeme.translation if lexeme is not None else None,
+                lexeme.id if lexeme is not None else None,
             )
             current_state = vocab_states.get(normalized_form)
             state_priority = {"new": 0, "learning": 1, "known": 2}
@@ -252,21 +253,29 @@ def get_text_render(session: Session, text_id: int) -> TextRenderResponse | None
         for token in tokens:
             if token.id is None:
                 continue
-            lemma, translation = vocab_details.get(
-                token.surface.casefold(),
-                (token.lemma, None),
+            token_details = vocab_details.get(token.surface.casefold())
+            if token_details is None and token.lemma is not None:
+                token_details = vocab_details.get(token.lemma.casefold())
+            lemma, translation, lexeme_id = token_details or (
+                token.lemma,
+                None,
+                None,
             )
+            token_state = vocab_states.get(token.surface.casefold())
+            if token_state is None and token.lemma is not None:
+                token_state = vocab_states.get(token.lemma.casefold())
             tokens_by_sentence[token.sentence_id].append(
                 RenderedToken(
                     id=token.id,
                     surface=token.surface,
                     lemma=lemma,
+                    lexeme_id=lexeme_id,
                     pos=token.pos,
                     translation=translation,
                     sentence_id=token.sentence_id,
                     order_index=token.order_index,
                     whitespace_after=token.whitespace_after,
-                    state=vocab_states.get(token.surface.casefold(), "new"),
+                    state=token_state or "new",
                 )
             )
 

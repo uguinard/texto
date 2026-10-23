@@ -91,6 +91,7 @@ class RenderedToken(BaseModel):
     id: int
     surface: str
     lemma: str | None
+    lexeme_id: int | None = None
     pos: str | None
     translation: str | None
     sentence_id: int
@@ -153,6 +154,7 @@ class VocabSaveRequest(BaseModel):
 
 class VocabItemResponse(BaseModel):
     id: int
+    lexeme_id: int | None = None
     surface: str
     lemma: str | None
     language: str

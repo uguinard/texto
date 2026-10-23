@@ -85,6 +85,7 @@ def _save_token(
 
     return VocabItemResponse(
         id=vocab_item.id,
+        lexeme_id=vocab_item.lexeme_id,
         surface=vocab_item.surface,
         lemma=vocab_item.lemma,
         language=vocab_item.language,
